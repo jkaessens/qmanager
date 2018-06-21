@@ -1,25 +1,27 @@
 use std::collections::VecDeque;
 use std::time::{Duration, SystemTime};
+//use std::os::unix::process::ExitStatusExt;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum JobState {
     Queued,
     Running,
-    Terminated,
+    Terminated(i32),
+    Killed(i32),
+    Failed(String)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Job {
-    id: u64,
-    cmdline: String,
-    scheduled: SystemTime,
-    started: Option<SystemTime>,
-    finished: Option<SystemTime>,
-    expected_duration: Duration,
-    stderr: Option<String>,
-    stdout: Option<String>,
-    exit_code: Option<u32>,
-    state: JobState,
+    pub id: u64,
+    pub cmdline: String,
+    pub scheduled: SystemTime,
+    pub started: Option<SystemTime>,
+    pub finished: Option<SystemTime>,
+    pub expected_duration: Duration,
+    pub stderr: String,
+    pub stdout: String,
+    pub state: JobState,
 }
 
 pub struct JobQueue {
@@ -27,6 +29,7 @@ pub struct JobQueue {
     queue: VecDeque<Job>,
     finished: VecDeque<Job>,
 }
+
 
 impl JobQueue {
     pub fn new() -> Self {
@@ -53,9 +56,8 @@ impl JobQueue {
             started: None,
             finished: None,
             expected_duration: expected_duration.unwrap_or_default(),
-            stderr: None,
-            stdout: None,
-            exit_code: None,
+            stderr: String::from(""),
+            stdout: String::from(""),
             state: JobState::Queued,
         };
 
@@ -64,15 +66,15 @@ impl JobQueue {
         self.last_id
     }
 
-    pub fn schedule(&mut self) -> Option<String> {
+    pub fn schedule(&mut self) -> Option<Job> {
         self.queue.front_mut().map(|j| {
             j.started = Some(SystemTime::now());
             j.state = JobState::Running;
-            j.cmdline.clone()
+            j.clone()
         })
     }
 
-    pub fn finish(&mut self, exit_code: u32, new_state: JobState) {
+    pub fn finish(&mut self, new_state: JobState, stdout: String, stderr: String) {
         if let Some(mut j) = self.queue.pop_front() {
             if j.state != JobState::Running {
                 panic!("Trying to finish a job that is not running: {:?}", j);
@@ -80,7 +82,8 @@ impl JobQueue {
 
             j.finished = Some(SystemTime::now());
             j.state = new_state;
-            j.exit_code = Some(exit_code);
+            j.stdout = stdout;
+            j.stderr = stderr;
             self.finished.push_back(j);
         }
     }

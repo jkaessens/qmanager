@@ -36,6 +36,14 @@ pub fn handle_submit(mut stream: TlsStream<TcpStream>, cmdline: &str, duration: 
         )?,
         &mut stream)?;
 
+    // Daemon returns associated Job ID
+    let response = serde_json::from_str(&read_and_decode(&mut stream)?)?;
+    match response {
+        Response::SubmitJob(id) => println!("Submitted as job #{}", id),
+        Response::Error(s) => println!("Could not submit job: {}", s),
+        _ => panic!("Unexpected response: {:?}", response),
+    }
+
     Ok(())
 }
 

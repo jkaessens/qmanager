@@ -1,14 +1,17 @@
 use std::fs::File;
-use std::io::{Read, Result};
+use std::io::{Read, Result, ErrorKind};
+use std::error::Error;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::process::Command;
+use std::os::unix::process::ExitStatusExt;
 
 use daemonize::Daemonize;
 use native_tls::{Pkcs12, TlsAcceptor, TlsStream};
 use serde_json;
 
-use job_queue::{JobQueue, JobState};
+use job_queue::{JobQueue, JobState, Job};
 use protocol::{Request, Response, read_and_decode, encode_and_write};
 
 
@@ -52,17 +55,21 @@ fn handle_client(
 
     let (ref q_mutex, ref cvar) = **q_mutex;
 
-    println!("TLS handshake completed.");
+    println!("[handle_client] TLS handshake completed.");
 
     loop {
         let s = read_and_decode(&mut stream);
         if let Err(e) = s {
-            println!("Client disconnected: {:?}", e);
+            if e.kind() == ErrorKind::UnexpectedEof {
+                println!("[handle_client] Disconnected");
+            } else {
+                eprintln!("[handle_client] Disconnected: {:?}", e);
+            }
             break;
         }
         let request = serde_json::from_str(&s.unwrap())?;
 
-        eprintln!("Got request: {:?}", request);
+        println!("[handle_client] Got request: {:?}", request);
 
         match request {
             Request::GetQueuedJobs => {
@@ -105,31 +112,63 @@ fn handle_client(
 fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
     let (ref q_mutex, ref cvar) = **q_mutex;
 
-    eprintln!("Queue Runner active.");
+    println!("[queue runner] Now active");
 
     loop {
-        let mut job_cmdline: Option<String> = None;
+        let mut job: Option<Job> = None;
 
         // acquire a new job to run
-        while job_cmdline.is_none() {
+        while job.is_none() {
             let mut q = q_mutex.lock().unwrap();
 
-            if let Some(s) = q.schedule() {
-                job_cmdline = Some(s);
-                eprintln!("Job scheduled!");
+            if let Some(j) = q.schedule() {
+                job = Some(j);
                 break;
             } else {
-                eprintln!("No job there. Waiting...");
+                println!("[queue runner] Falling asleep");
                 q = cvar.wait(q).unwrap();
-                eprintln!("Woke up! Getting a job.");
-                job_cmdline = q.schedule();
+                println!("[queue runner] Woke up");
+                job = q.schedule();
             }
         }
 
-        println!("Running {}...", job_cmdline.unwrap());
 
-        // put executed job into finished queue
-        q_mutex.lock().unwrap().finish(0, JobState::Terminated);
+        let job = job.unwrap();
+        println!("[queue runner] Running job {}", job.id);
+
+        let cmd = Command::new("sh")
+            .arg("-c")
+            .arg(&job.cmdline)
+            .current_dir("/")
+            .output();
+
+        match cmd {
+            Ok(output) => {
+
+                let mut q = q_mutex.lock().unwrap();
+
+                if let Some(signum) = output.status.signal() {
+                    println!("[queue runner] Job was killed with signal {}", signum);
+                    q.finish(JobState::Killed(signum),
+                             String::from_utf8_lossy(&output.stdout).to_string(),
+                             String::from_utf8_lossy(&output.stderr).to_string(),
+                    );
+                } else {
+                    let status = output.status.code().unwrap();
+                    println!("[queue runner] Job has terminated with code {}", status);
+                    q.finish(JobState::Terminated(status),
+                             String::from_utf8_lossy(&output.stdout).to_string(),
+                             String::from_utf8_lossy(&output.stderr).to_string(),
+                    );
+                }
+            },
+            Err(e) => {
+                let mut q = q_mutex.lock().unwrap();
+                let message = e.description().to_string();
+                println!("[queue runner] Failed to launch job: {}", message);
+                q.finish(JobState::Failed(message), String::from(""), String::from(""));
+            }
+        }
     }
 }
 
