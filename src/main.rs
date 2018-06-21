@@ -7,6 +7,7 @@ extern crate daemonize;
 extern crate native_tls;
 extern crate serde;
 extern crate serde_json;
+extern crate byteorder;
 
 mod clicommands;
 mod daemon;
@@ -16,7 +17,7 @@ mod protocol;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::{Error, ErrorKind, Result};
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::str::FromStr;
 
 use clap::{App, Arg, SubCommand, Values};
@@ -51,10 +52,9 @@ fn connect(
 
     let addrs = (host, port).to_socket_addrs()?;
 
-    let mut s = Err(Error::from(ErrorKind::Other));
 
     for addr in addrs {
-        s = TcpStream::connect(addr);
+        let s = TcpStream::connect(addr);
         if let Ok(tcp_stream) = s {
             tcp_stream.set_nodelay(true)?;
             return connector
@@ -104,6 +104,15 @@ fn main() -> Result<()> {
                 ),
         )
         .subcommand(SubCommand::with_name("queue-status"))
+        .subcommand(SubCommand::with_name("submit")
+                    .arg(Arg::with_name("duration")
+                         .short("d")
+                         .long("duration")
+                         .help("Specify expected duration for process in seconds. Not used internally, only for your bookkeeping")
+                         .takes_value(true)
+                    )
+                    .arg(Arg::with_name("cmdline").takes_value(true).required(true))
+        )
         .get_matches();
 
     match app.subcommand_name() {
@@ -126,6 +135,17 @@ fn main() -> Result<()> {
                     .map(|p| FromStr::from_str(p).unwrap()),
                 matches.values_of("ca"),
             )?)
+        }
+        Some("submit") => {
+            let matches = app.subcommand_matches("submit").unwrap();
+            clicommands::handle_submit(
+                connect(
+                    matches.value_of("host"),
+                    matches.value_of("port").map(|p| FromStr::from_str(p).unwrap()),
+                    matches.values_of("ca"))?,
+                matches.value_of("cmdline").unwrap(),
+                matches.value_of("duration")
+            )
         }
         _ => {
             eprintln!("Please specify a valid subcommand!");

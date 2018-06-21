@@ -1,7 +1,11 @@
-use job_queue::Job;
-use std::time::Duration;
 
-use std::mem;
+use std::time::Duration;
+use std::io::Result;
+use std::io::prelude::*;
+
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+
+use job_queue::Job;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Request {
@@ -19,21 +23,22 @@ pub enum Response {
     Ok,
 }
 
-pub fn encode(source: String, dest: &mut Vec<u8>) {
-    let len: u32 = source.len() as u32;
+pub fn encode_and_write(source: &str, target: &mut Write) -> Result<()> {
+    let len = source.len();
+    //    let len_byte_buf: [u8; mem::size_of::<u32>()] = unsafe { mem::transmute(len) };
 
-    let len_byte_buf: [u8; mem::size_of::<u32>()] = unsafe { mem::transmute(len) };
+    target.write_u32::<LittleEndian>(len as u32)?;
+    target.write_all(source.as_bytes())?;
 
-    dest.extend_from_slice(&len_byte_buf);
-    dest.extend_from_slice(source.as_bytes());
+    Ok(())
 }
 
-pub fn decode(source: &Vec<u8>, dest: &mut String) {
-    if source.len() < mem::size_of::<u32>() {
-        panic!("Incomplete packet!");
-    }
+pub fn read_and_decode(source: &mut Read) -> Result<String> {
 
-    let len: u32 = unsafe { mem::transmute::<[u8; 4], u32>(source[0..mem::size_of::<u32>()]) };
+    let len: u32 = source.read_u32::<LittleEndian>()?;
 
-    let len: u32 = unsafe { mem::transmute(&source[0..mem::size_of::<u32>() - 1]) };
+    let mut buf = vec![0; len as usize];
+    source.read_exact(&mut buf)?;
+
+    Ok(String::from_utf8(buf).unwrap())
 }

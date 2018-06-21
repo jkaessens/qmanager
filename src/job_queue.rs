@@ -1,6 +1,4 @@
 use std::collections::VecDeque;
-use std::slice::Iter;
-use std::thread;
 use std::time::{Duration, SystemTime};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -50,7 +48,7 @@ impl JobQueue {
     pub fn submit(&mut self, cmdline: String, expected_duration: Option<Duration>) -> u64 {
         let job = Job {
             id: self.last_id + 1,
-            cmdline: cmdline,
+            cmdline,
             scheduled: SystemTime::now(),
             started: None,
             finished: None,
@@ -89,14 +87,12 @@ impl JobQueue {
 
     pub fn remove_finished(&mut self, id: u64) -> Result<(), ()> {
         let mut index: Option<usize> = None;
-        let mut current: usize = 0;
 
-        for job in self.finished.iter() {
+        for (current, job) in self.finished.iter().enumerate() {
             if job.id == id {
                 index = Some(current);
                 break;
             }
-            current += 1;
         }
 
         if let Some(i) = index {
