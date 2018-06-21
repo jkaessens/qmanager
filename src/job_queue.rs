@@ -3,12 +3,14 @@ use std::slice::Iter;
 use std::thread;
 use std::time::{Duration, SystemTime};
 
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum JobState {
     Queued,
     Running,
     Terminated,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Job {
     id: u64,
     cmdline: String,
@@ -37,22 +39,22 @@ impl JobQueue {
         }
     }
 
-    pub fn iter_queued(&self) -> Iter<Job> {
+    pub fn iter_queued(&self) -> impl Iterator<Item = &Job> {
         self.queue.iter()
     }
 
-    pub fn iter_finished(&self) -> Iter<Job> {
+    pub fn iter_finished(&self) -> impl Iterator<Item = &Job> {
         self.finished.iter()
     }
 
-    pub fn submit(&mut self, cmdline: String) {
+    pub fn submit(&mut self, cmdline: String, expected_duration: Option<Duration>) -> u64 {
         let job = Job {
             id: self.last_id + 1,
             cmdline: cmdline,
             scheduled: SystemTime::now(),
             started: None,
             finished: None,
-            expected_duration: Duration::new(0, 0),
+            expected_duration: expected_duration.unwrap_or_default(),
             stderr: None,
             stdout: None,
             exit_code: None,
@@ -61,16 +63,49 @@ impl JobQueue {
 
         self.last_id += 1;
         self.queue.push_back(job);
+        self.last_id
     }
 
-    pub fn run_once(&mut self) {
-        if let Some(j) = self.queue.pop_front() {
+    pub fn schedule(&mut self) -> Option<String> {
+        self.queue.front_mut().map(|j| {
             j.started = Some(SystemTime::now());
-            // ... run actual job
+            j.state = JobState::Running;
+            j.cmdline.clone()
+        })
+    }
+
+    pub fn finish(&mut self, exit_code: u32, new_state: JobState) {
+        if let Some(mut j) = self.queue.pop_front() {
+            if j.state != JobState::Running {
+                panic!("Trying to finish a job that is not running: {:?}", j);
+            }
+
             j.finished = Some(SystemTime::now());
-            j.state = JobState::Terminated;
-            j.exit_code = Some(0);
+            j.state = new_state;
+            j.exit_code = Some(exit_code);
             self.finished.push_back(j);
+        }
+    }
+
+    pub fn remove_finished(&mut self, id: u64) -> Result<(), ()> {
+        let mut index: Option<usize> = None;
+        let mut current: usize = 0;
+
+        for job in self.finished.iter() {
+            if job.id == id {
+                index = Some(current);
+                break;
+            }
+            current += 1;
+        }
+
+        if let Some(i) = index {
+            self.finished
+                .remove(i)
+                .expect("Failed to remove element from job queue");
+            Ok(())
+        } else {
+            Err(())
         }
     }
 }
