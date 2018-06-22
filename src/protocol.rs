@@ -8,9 +8,12 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use job_queue::Job;
 
+pub trait Stream: Read + Write {}
+impl<T: Read + Write> Stream for T {}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Request {
-    SubmitJob(String, Option<Duration>),
+    SubmitJob(String, Option<Duration>, Option<String>),
     ReapJob(u64),
     GetQueuedJobs,
     GetFinishedJobs,
@@ -24,9 +27,8 @@ pub enum Response {
     Ok,
 }
 
-pub fn encode_and_write(source: &str, target: &mut Write) -> Result<()> {
+pub fn encode_and_write(source: &str, target: &mut Stream) -> Result<()> {
     let len = source.len();
-    //    let len_byte_buf: [u8; mem::size_of::<u32>()] = unsafe { mem::transmute(len) };
 
     target.write_u32::<LittleEndian>(len as u32)?;
     target.write_all(source.as_bytes())?;
@@ -34,7 +36,7 @@ pub fn encode_and_write(source: &str, target: &mut Write) -> Result<()> {
     Ok(())
 }
 
-pub fn read_and_decode(source: &mut Read) -> Result<String> {
+pub fn read_and_decode(source: &mut Stream) -> Result<String> {
 
     let len: u32 = source.read_u32::<LittleEndian>()?;
 

@@ -1,18 +1,18 @@
 use std::fs::File;
-use std::io::{Read, Result, ErrorKind};
+use std::io::{Read, Result, ErrorKind, Write};
 use std::error::Error;
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::os::unix::process::ExitStatusExt;
 
 use daemonize::Daemonize;
-use native_tls::{Pkcs12, TlsAcceptor, TlsStream};
+use native_tls::{Pkcs12, TlsAcceptor};
 use serde_json;
 
 use job_queue::{JobQueue, JobState, Job};
-use protocol::{Request, Response, read_and_decode, encode_and_write};
+use protocol::{Request, Response, read_and_decode, encode_and_write, Stream};
 
 
 fn daemonize(pidfile: Option<&str>) -> Result<()> {
@@ -31,9 +31,13 @@ fn daemonize(pidfile: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn create_socket(tcp_port: u16, certfile: &str) -> Result<(TcpListener, TlsAcceptor)> {
+fn create_tcp_socket(tcp_port: u16) -> Result<TcpListener> {
     let bind_address = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], tcp_port));
     let listener = TcpListener::bind(bind_address)?;
+    Ok(listener)
+}
+
+fn create_tls_acceptor(certfile: &str) -> Result<TlsAcceptor> {
 
     // load server certificate bundle
     let mut pkcs12 = vec![];
@@ -45,17 +49,15 @@ fn create_socket(tcp_port: u16, certfile: &str) -> Result<(TcpListener, TlsAccep
     let pkcs12 = Pkcs12::from_der(&pkcs12, "cl057").expect("Failed to decode certificate");
 
     let acceptor = TlsAcceptor::builder(pkcs12).unwrap().build().unwrap();
-    Ok((listener, acceptor))
+    Ok(acceptor)
 }
 
-fn handle_client(
-    mut stream: TlsStream<TcpStream>,
+fn handle_client<T: Stream>(
+    mut stream: T,
     q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>,
 ) -> Result<()> {
 
     let (ref q_mutex, ref cvar) = **q_mutex;
-
-    println!("[handle_client] TLS handshake completed.");
 
     loop {
         let s = read_and_decode(&mut stream);
@@ -98,15 +100,28 @@ fn handle_client(
                 }
             }
 
-            Request::SubmitJob(cmdline, expected_duration) => {
+            Request::SubmitJob(cmdline, expected_duration, notify_email) => {
                 let mut q = q_mutex.lock().unwrap();
-                let id = q.submit(cmdline, expected_duration);
+                let id = q.submit(cmdline, expected_duration, notify_email);
                 cvar.notify_one();
                 encode_and_write(&serde_json::to_string_pretty(&Response::SubmitJob(id))?, &mut stream)?;
             }
         }
     }
     Ok(())
+}
+
+fn run_notify_command(job: Job) -> Result<()> {
+    let body = serde_json::to_string_pretty(&job).unwrap();
+    let notify_cmd = job.notify_cmd.unwrap();
+    Command::new("sh")
+        .arg("-c")
+        .arg(&notify_cmd)
+        .stdin(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child.stdin.as_mut().unwrap().write_all(body.as_bytes())
+        })
 }
 
 fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
@@ -142,7 +157,7 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
             .current_dir("/")
             .output();
 
-        match cmd {
+        let job = match cmd {
             Ok(output) => {
 
                 let mut q = q_mutex.lock().unwrap();
@@ -152,21 +167,30 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
                     q.finish(JobState::Killed(signum),
                              String::from_utf8_lossy(&output.stdout).to_string(),
                              String::from_utf8_lossy(&output.stderr).to_string(),
-                    );
+                    )
                 } else {
                     let status = output.status.code().unwrap();
                     println!("[queue runner] Job has terminated with code {}", status);
                     q.finish(JobState::Terminated(status),
                              String::from_utf8_lossy(&output.stdout).to_string(),
                              String::from_utf8_lossy(&output.stderr).to_string(),
-                    );
+                    )
                 }
             },
             Err(e) => {
                 let mut q = q_mutex.lock().unwrap();
                 let message = e.description().to_string();
                 println!("[queue runner] Failed to launch job: {}", message);
-                q.finish(JobState::Failed(message), String::from(""), String::from(""));
+                q.finish(JobState::Failed(message), String::from(""), String::from(""))
+            }
+        };
+
+        if let Some(j) = job {
+            if j.notify_cmd.is_some() {
+                let id = j.id;
+                if let Err(e) = run_notify_command(j) {
+                    eprintln!("Failed to run notify command for job {}: {}", id, e.description());
+                }
             }
         }
     }
@@ -175,7 +199,14 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
 pub fn handle(tcp_port: Option<u16>, pidfile: Option<&str>, cert: Option<&str>) -> Result<()> {
     daemonize(pidfile)?;
 
-    let (listener, acceptor) = create_socket(tcp_port.unwrap_or(1337u16), cert.unwrap())?;
+    let listener = create_tcp_socket(tcp_port.unwrap_or(1337u16))?;
+
+    // set up TLS certificates if requested
+    let tls_acceptor: Option<TlsAcceptor> = if let Some(c) = cert {
+        Some(create_tls_acceptor(c)?)
+    } else {
+        None
+    };
 
     let job_queue = Arc::new((Mutex::new(JobQueue::new()), Condvar::new()));
 
@@ -191,11 +222,11 @@ pub fn handle(tcp_port: Option<u16>, pidfile: Option<&str>, cert: Option<&str>) 
         match stream {
             Ok(stream) => {
                 println!("Client {} connected.", stream.peer_addr().unwrap());
-                let acceptor = acceptor.clone();
-                match acceptor.accept(stream) {
-                    Ok(stream) => handle_client(stream, &job_queue.clone())?,
-                    Err(e) => eprintln!("Connection failed: {}", e),
+                match tls_acceptor {
+                    Some(ref tls) => handle_client(tls.clone().accept(stream).expect("TLS handshake failed"), &job_queue.clone())?,
+                    None => handle_client(stream, &job_queue.clone())?
                 }
+
             }
             Err(e) => {
                 eprintln!("Connection failed: {}", e);

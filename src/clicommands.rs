@@ -1,14 +1,12 @@
 
-use std::io::Result;
-use std::net::TcpStream;
+use std::io::{Result};
 use std::time::Duration;
 use std::error::Error;
 
-use native_tls::TlsStream;
 use serde_json;
 
 use job_queue::*;
-use protocol::{read_and_decode, encode_and_write, Request, Response};
+use protocol::{read_and_decode, encode_and_write, Request, Response, Stream};
 
 fn print_jobs(header: &str, jobs: Vec<Job>) {
     println!("{}", header);
@@ -17,7 +15,8 @@ fn print_jobs(header: &str, jobs: Vec<Job>) {
     }
 }
 
-pub fn handle_submit(mut stream: TlsStream<TcpStream>, cmdline: &str, duration: Option<&str>) -> Result<()> {
+pub fn handle_submit<T: Stream>(mut stream: T, cmdline: &str, duration: Option<&str>, email: Option<&str>)
+                     -> Result<()> {
 
     let seconds = match duration.unwrap_or("0").parse::<u64>() {
         Ok(duration) => duration,
@@ -31,10 +30,11 @@ pub fn handle_submit(mut stream: TlsStream<TcpStream>, cmdline: &str, duration: 
         &serde_json::to_string_pretty(
             &Request::SubmitJob(
                 cmdline.to_string(),
-                Some(Duration::from_secs(seconds))
-            )
+                Some(Duration::from_secs(seconds)),
+                email.map(|s| s.to_string()))
         )?,
-        &mut stream)?;
+            &mut stream
+        )?;
 
     // Daemon returns associated Job ID
     let response = serde_json::from_str(&read_and_decode(&mut stream)?)?;
@@ -47,8 +47,7 @@ pub fn handle_submit(mut stream: TlsStream<TcpStream>, cmdline: &str, duration: 
     Ok(())
 }
 
-pub fn handle_queue_status(mut stream: TlsStream<TcpStream>) -> Result<()> {
-    eprintln!("TLS Handshake completed! Sending request...");
+pub fn handle_queue_status<T: Stream>(mut stream: T) -> Result<()> {
 
     let s = serde_json::to_string_pretty(&Request::GetQueuedJobs).unwrap();
     encode_and_write(&s, &mut stream)?;

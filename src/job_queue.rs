@@ -22,6 +22,7 @@ pub struct Job {
     pub stderr: String,
     pub stdout: String,
     pub state: JobState,
+    pub notify_cmd: Option<String>
 }
 
 pub struct JobQueue {
@@ -48,7 +49,7 @@ impl JobQueue {
         self.finished.iter()
     }
 
-    pub fn submit(&mut self, cmdline: String, expected_duration: Option<Duration>) -> u64 {
+    pub fn submit(&mut self, cmdline: String, expected_duration: Option<Duration>, notify_cmd: Option<String>) -> u64 {
         let job = Job {
             id: self.last_id + 1,
             cmdline,
@@ -59,6 +60,7 @@ impl JobQueue {
             stderr: String::from(""),
             stdout: String::from(""),
             state: JobState::Queued,
+            notify_cmd
         };
 
         self.last_id += 1;
@@ -74,7 +76,7 @@ impl JobQueue {
         })
     }
 
-    pub fn finish(&mut self, new_state: JobState, stdout: String, stderr: String) {
+    pub fn finish(&mut self, new_state: JobState, stdout: String, stderr: String) -> Option<Job> {
         if let Some(mut j) = self.queue.pop_front() {
             if j.state != JobState::Running {
                 panic!("Trying to finish a job that is not running: {:?}", j);
@@ -84,7 +86,10 @@ impl JobQueue {
             j.state = new_state;
             j.stdout = stdout;
             j.stderr = stderr;
-            self.finished.push_back(j);
+            self.finished.push_back(j.clone());
+            Some(j)
+        } else {
+            None
         }
     }
 

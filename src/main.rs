@@ -9,6 +9,7 @@ extern crate serde;
 extern crate serde_json;
 extern crate byteorder;
 
+
 mod clicommands;
 mod daemon;
 mod job_queue;
@@ -21,46 +22,90 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::str::FromStr;
 
 use clap::{App, Arg, SubCommand, Values};
-use native_tls::{Certificate, TlsConnector, TlsStream};
+use native_tls::{Certificate, TlsConnector};
+
+use protocol::Stream;
 
 fn connect(
     host: Option<&str>,
     port: Option<u16>,
     ca: Option<Values>,
-) -> Result<TlsStream<TcpStream>> {
-    let mut builder = TlsConnector::builder().unwrap();
+    ssl: bool
+) -> Result<Box<Stream>> {
 
-    if let Some(values) = ca {
-        for v in values {
-            // load certificate
-            let mut cert = vec![];
-            let mut cert_file = File::open(v)?;
-            cert_file
-                .read_to_end(&mut cert)
-                .expect("Failed to read certificate file");
-
-            if let Ok(c) = Certificate::from_pem(&cert) {
-                builder.add_root_certificate(c).unwrap();
-            }
-        }
+    if ssl {
+        connect_tls(host, port, ca)
+    } else {
+        connect_tcp(host, port)
     }
 
-    let connector = builder.build().unwrap();
+}
 
+fn connect_tcp(
+    host: Option<&str>,
+    port: Option<u16>,
+) -> Result<Box<Stream>> {
+
+    // Set up TCP connection
     let host = host.unwrap_or("localhost");
     let port = port.unwrap_or(1337u16);
 
+    // Resolve IP(s) for given hostname
     let addrs = (host, port).to_socket_addrs()?;
 
+    // Try all addresses until one succeeds
+    for addr in addrs {
+        if let Ok(s) = TcpStream::connect(addr) {
+            return Ok(Box::new(s))
+        }
+    }
 
+    Err(Error::from(ErrorKind::ConnectionRefused))
+}
+
+fn connect_tls(
+    host: Option<&str>,
+    port: Option<u16>,
+    ca: Option<Values>
+) -> Result<Box<Stream>> {
+
+    // Load CA certificates, if requested
+
+        let mut builder = TlsConnector::builder().unwrap();
+
+        if let Some(values) = ca {
+            for v in values {
+                // load certificate
+                let mut cert = vec![];
+                let mut cert_file = File::open(v)?;
+                cert_file
+                    .read_to_end(&mut cert)
+                    .expect("Failed to read certificate file");
+
+                if let Ok(c) = Certificate::from_pem(&cert) {
+                    builder.add_root_certificate(c).unwrap();
+                }
+            }
+        }
+
+    let connector = builder.build().unwrap();
+
+    // Set up TCP connection
+    let host = host.unwrap_or("localhost");
+    let port = port.unwrap_or(1337u16);
+
+    // Resolve IP(s) for given hostname
+    let addrs = (host, port).to_socket_addrs()?;
+
+    // Try all addresses until one succeeds
     for addr in addrs {
         let s = TcpStream::connect(addr);
+
         if let Ok(tcp_stream) = s {
-            tcp_stream.set_nodelay(true)?;
-            return connector
-            //                .connect(host, tcp_stream)
-                .danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(tcp_stream)
-                .map_err(|_e| Error::from(ErrorKind::ConnectionAborted));
+            return Ok(Box::new(
+                connector
+                    .danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(tcp_stream)
+                    .map_err(|_e| Error::from(ErrorKind::ConnectionAborted))?));
         }
     }
 
@@ -78,7 +123,15 @@ fn main() -> Result<()> {
                 .help("Set CA certificate")
                 .global(true)
                 .multiple(true)
-                .takes_value(true),
+                .takes_value(true)
+                .conflicts_with("insecure")
+                ,
+        )
+        .arg(Arg::with_name("insecure")
+             .long("insecure")
+             .help("Use plain TCP instead of SSL/TLS")
+             .global(true)
+             .conflicts_with_all(&["ca", "cert"])
         )
         .subcommand(
             SubCommand::with_name("daemon")
@@ -88,7 +141,9 @@ fn main() -> Result<()> {
                         .long("cert")
                         .help("Set SSL Certificate")
                         .takes_value(true)
-                        .required(true),
+                        .conflicts_with("insecure")
+                        .required_unless("insecure")
+                        ,
                 )
                 .arg(
                     Arg::with_name("port")
@@ -111,6 +166,10 @@ fn main() -> Result<()> {
                          .help("Specify expected duration for process in seconds. Not used internally, only for your bookkeeping")
                          .takes_value(true)
                     )
+                    .arg(Arg::with_name("notify-email")
+                         .long("notify-email")
+                         .help("Send an email on job termination")
+                         .takes_value(true))
                     .arg(Arg::with_name("cmdline").takes_value(true).required(true))
         )
         .get_matches();
@@ -134,6 +193,7 @@ fn main() -> Result<()> {
                     .value_of("port")
                     .map(|p| FromStr::from_str(p).unwrap()),
                 matches.values_of("ca"),
+                !matches.is_present("insecure")
             )?)
         }
         Some("submit") => {
@@ -142,9 +202,13 @@ fn main() -> Result<()> {
                 connect(
                     matches.value_of("host"),
                     matches.value_of("port").map(|p| FromStr::from_str(p).unwrap()),
-                    matches.values_of("ca"))?,
+                    matches.values_of("ca"),
+                    !matches.is_present("insecure")
+                )?,
+
                 matches.value_of("cmdline").unwrap(),
-                matches.value_of("duration")
+                matches.value_of("duration"),
+                matches.value_of("notify-email")
             )
         }
         _ => {
