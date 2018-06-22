@@ -1,0 +1,112 @@
+#+TITLE: Hybrid Computer Job Submission Tool
+
+* General Usage
+
+Help output:
+
+#+BEGIN_SRC
+qmanager 0.1.0
+Jan Christian Kaessens <j.kaessens@ikmb.uni-kiel.de>
+
+
+USAGE:
+    qmanager [FLAGS] [OPTIONS] [SUBCOMMAND]
+
+FLAGS:
+    -h, --help        Prints help information
+        --insecure    Use plain TCP instead of SSL/TLS
+    -V, --version     Prints version information
+
+OPTIONS:
+        --ca <ca>...    Set CA certificate
+
+SUBCOMMANDS:
+    daemon          Starts the Queue Manager Daemon
+    help            Prints this message or the help of the given subcommand(s)
+    queue-status    
+    submit          
+#+END_SRC
+
+** =--insecure== - Use plain TCP instead of SSL/TLS
+
+Disables all SSL/TLS functionality. Instead, only plain, insecure TCP
+communication is used. Therefore, =--insecure= cannot be used with =--ca= or
+=daemon --cert=.
+
+** =--ca <ca>...= - Set CA certificate
+
+Adds the specified CA certificates to the verification chain to verify the
+server certificate if its issuers are not in the caller's system certificate
+store. By default, only the system certificate store is used.
+
+* Subcommand =daemon=
+
+Starts the Queue Manager Daemon
+
+#+BEGIN_SRC
+USAGE:
+    qmanager daemon [FLAGS] [OPTIONS] --cert <cert>
+
+FLAGS:
+    -h, --help        Prints help information
+        --insecure    Use plain TCP instead of SSL/TLS
+    -V, --version     Prints version information
+
+OPTIONS:
+        --cert <cert>          Set SSL Certificate
+        --pidfile <pidfile>    Set PID file location
+        --port <port>          Set TCP port to listen on
+#+END_SRC
+
+** =--cert <cert>= - Set the server's SSL certificates
+
+Specifies the server's PKCS#12 certificate. The certificate bundle must contain
+the whole trust chain in ascending order. This option conflicts with the =--insecure= flag.
+
+** =--pidfile <pidfile>= - Set PID file location
+
+If specified, stores the daemon's PID in this file and places an exclusive lock
+on it while the daemon is running. Can be used to manage the daemon by systemd, upstart, supervisord, etc.
+
+** =--port <port>= - Set TCP port to listen on
+
+If specified, sets the TCP port the daemon will listen on for connection requests. Defaults to =1337=.
+
+** Subcommand =queue-status=
+
+Displays the job queue in a (currently) very crude way, does not support arguments (besides =--insecure= and =--ca=).
+
+** Subcommand =submit=
+
+Submits a job
+
+#+BEGIN_SRC
+USAGE:
+    qmanager submit [FLAGS] [OPTIONS] <cmdline>
+
+FLAGS:
+    -h, --help        Prints help information
+        --insecure    Use plain TCP instead of SSL/TLS
+    -V, --version     Prints version information
+
+OPTIONS:
+        --ca <ca>...                     Set CA certificate
+    -d, --duration <duration>            Specify expected duration for process in seconds. Not used internally, only for
+                                         your bookkeeping
+        --notify-cmd <notify-cmd>        Execute a command upon job termination
+
+ARGS:
+    <cmdline>    
+#+END_SRC
+
+** =-d, --duration <duration>= - Specify expected duration for process in seconds
+
+Just what it says. It is not used internally, but could be used by external programs to determine the total queue runtime.
+
+** =--notify-cmd <notify-cmd>= - Execute a command upon job termination
+
+Executes a command on the server. The job description is fed to this command in
+JSON format through standard input. Can be used to call RPC methods on
+webservers (using =curl=) or send emails with job descriptions (using
+=sendmail=). This command is likely to be removed due to security issues.
+
