@@ -39,7 +39,16 @@ pub fn read_and_decode(source: &mut Stream) -> Result<String> {
     let len: u32 = source.read_u32::<LittleEndian>()?;
 
     let mut buf = vec![0; len as usize];
-    source.read_exact(&mut buf)?;
 
-    Ok(String::from_utf8(buf).unwrap())
+    let tls_handshake = len & 0xFF;
+    let tls_ver_major = (len >> 8) & 0xFF;
+    let tls_ver_minor = (len >> 16) & 0xFF;
+
+    if tls_handshake == 22 && tls_ver_major == 3 && tls_ver_minor > 0 && tls_ver_minor < 4 {
+        // We got a TLS handshake on an insecure socket
+        Err(::std::io::Error::from(::std::io::ErrorKind::InvalidData))
+    } else {
+        source.read_exact(&mut buf)?;
+        Ok(String::from_utf8(buf).unwrap())
+    }
 }
