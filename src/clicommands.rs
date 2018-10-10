@@ -1,6 +1,4 @@
-use std::error::Error;
 use std::io::Result;
-use std::time::Duration;
 
 use serde_json;
 
@@ -14,27 +12,10 @@ fn print_jobs(header: &str, jobs: Vec<Job>) {
     }
 }
 
-pub fn handle_submit<T: Stream>(
-    mut stream: T,
-    cmdline: &str,
-    duration: Option<&str>,
-    email: Option<&str>,
-) -> Result<()> {
-    let seconds = match duration.unwrap_or("0").parse::<u64>() {
-        Ok(duration) => duration,
-        Err(e) => {
-            eprintln!(
-                "Failed to pase duration: {}, using 0 instead.",
-                e.description()
-            );
-            0
-        }
-    };
-
+pub fn handle_submit<T: Stream>(mut stream: T, cmdline: &str, email: Option<&str>) -> Result<()> {
     encode_and_write(
         &serde_json::to_string_pretty(&Request::SubmitJob(
             cmdline.to_string(),
-            Some(Duration::from_secs(seconds)),
             email.map(|s| s.to_string()),
         ))?,
         &mut stream,

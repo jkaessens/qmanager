@@ -115,22 +115,23 @@ fn main() -> Result<()> {
                 .global(true)
                 .multiple(true)
                 .takes_value(true)
-                .conflicts_with("insecure")
-                ,
+                .conflicts_with("insecure"),
         )
-        .arg(Arg::with_name("insecure")
-             .long("insecure")
-             .help("Use plain TCP instead of SSL/TLS")
-             .global(true)
-             .conflicts_with_all(&["ca", "cert"])
+        .arg(
+            Arg::with_name("insecure")
+                .long("insecure")
+                .help("Use plain TCP instead of SSL/TLS")
+                .global(true)
+                .conflicts_with_all(&["ca", "cert"]),
         )
         .subcommand(
             SubCommand::with_name("daemon")
                 .about("Starts the Queue Manager Daemon")
-                .arg(Arg::with_name("foreground")
-                     .long("foreground")
-                     .help("Stay in foreground, do not detach. No pidfile is created.")
-                     .conflicts_with("pidfile")
+                .arg(
+                    Arg::with_name("foreground")
+                        .long("foreground")
+                        .help("Stay in foreground, do not detach. No pidfile is created.")
+                        .conflicts_with("pidfile"),
                 )
                 .arg(
                     Arg::with_name("cert")
@@ -138,8 +139,7 @@ fn main() -> Result<()> {
                         .help("Set SSL Certificate")
                         .takes_value(true)
                         .conflicts_with("insecure")
-                        .required_unless("insecure")
-                        ,
+                        .required_unless("insecure"),
                 )
                 .arg(
                     Arg::with_name("port")
@@ -155,25 +155,24 @@ fn main() -> Result<()> {
                 ),
         )
         .subcommand(SubCommand::with_name("queue-status"))
-        .subcommand(SubCommand::with_name("submit")
-                    .arg(Arg::with_name("duration")
-                         .short("d")
-                         .long("duration")
-                         .help("Specify expected duration for process in seconds. Not used internally, only for your bookkeeping")
-                         .takes_value(true)
-                    )
-                    .arg(Arg::with_name("notify-email")
-                         .long("notify-email")
-                         .help("Send an email on job termination")
-                         .takes_value(true))
-                    .arg(Arg::with_name("cmdline").takes_value(true).required(true)))
-        .subcommand(SubCommand::with_name("reap")
-                    .arg(Arg::with_name("jobid")
-                         .help("Job ID to retrieve and remove from the status list")
-                         .takes_value(true)
-                         .required(true)
-                    ))
-
+        .subcommand(
+            SubCommand::with_name("submit")
+                .arg(
+                    Arg::with_name("notify-cmd")
+                        .long("notify-cmd")
+                        .help("Run command after program termination")
+                        .takes_value(true),
+                )
+                .arg(Arg::with_name("cmdline").takes_value(true).required(true)),
+        )
+        .subcommand(
+            SubCommand::with_name("reap").arg(
+                Arg::with_name("jobid")
+                    .help("Job ID to retrieve and remove from the status list")
+                    .takes_value(true)
+                    .required(true),
+            ),
+        )
         .get_matches();
 
     match app.subcommand_name() {
@@ -211,8 +210,7 @@ fn main() -> Result<()> {
                     !matches.is_present("insecure"),
                 )?,
                 matches.value_of("cmdline").unwrap(),
-                matches.value_of("duration"),
-                matches.value_of("notify-email"),
+                matches.value_of("notify-cmd"),
             )
         }
         Some("reap") => {

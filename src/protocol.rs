@@ -1,6 +1,5 @@
 use std::io::prelude::*;
 use std::io::Result;
-use std::time::Duration;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
@@ -11,7 +10,7 @@ impl<T: Read + Write> Stream for T {}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Request {
-    SubmitJob(String, Option<Duration>, Option<String>),
+    SubmitJob(String, Option<String>),
     ReapJob(u64),
     GetQueuedJobs,
     GetFinishedJobs,

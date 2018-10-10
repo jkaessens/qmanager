@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 //use std::os::unix::process::ExitStatusExt;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -19,7 +19,6 @@ pub struct Job {
     pub scheduled: SystemTime,
     pub started: Option<SystemTime>,
     pub finished: Option<SystemTime>,
-    pub expected_duration: Duration,
     pub stderr: String,
     pub stdout: String,
     pub state: JobState,
@@ -49,19 +48,13 @@ impl JobQueue {
         self.finished.iter()
     }
 
-    pub fn submit(
-        &mut self,
-        cmdline: String,
-        expected_duration: Option<Duration>,
-        notify_cmd: Option<String>,
-    ) -> u64 {
+    pub fn submit(&mut self, cmdline: String, notify_cmd: Option<String>) -> u64 {
         let job = Job {
             id: self.last_id + 1,
             cmdline,
             scheduled: SystemTime::now(),
             started: None,
             finished: None,
-            expected_duration: expected_duration.unwrap_or_default(),
             stderr: String::from(""),
             stdout: String::from(""),
             state: JobState::Queued,

@@ -109,9 +109,9 @@ fn handle_client<T: Stream>(
                 }
             }
 
-            Request::SubmitJob(cmdline, expected_duration, notify_email) => {
+            Request::SubmitJob(cmdline, notify_email) => {
                 let mut q = q_mutex.lock().unwrap();
-                let id = q.submit(cmdline, expected_duration, notify_email);
+                let id = q.submit(cmdline, notify_email);
                 cvar.notify_one();
                 encode_and_write(
                     &serde_json::to_string_pretty(&Response::SubmitJob(id))?,
