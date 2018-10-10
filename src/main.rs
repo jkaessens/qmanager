@@ -170,8 +170,14 @@ fn main() -> Result<()> {
                          .long("notify-email")
                          .help("Send an email on job termination")
                          .takes_value(true))
-                    .arg(Arg::with_name("cmdline").takes_value(true).required(true))
-        )
+                    .arg(Arg::with_name("cmdline").takes_value(true).required(true)))
+        .subcommand(SubCommand::with_name("reap")
+                    .arg(Arg::with_name("jobid")
+                         .help("Job ID to retrieve and remove from the status list")
+                         .takes_value(true)
+                         .required(true)
+                    ))
+        
         .get_matches();
 
     match app.subcommand_name() {
@@ -210,6 +216,19 @@ fn main() -> Result<()> {
                 matches.value_of("duration"),
                 matches.value_of("notify-email")
             )
+        }
+        Some("reap") => {
+            let matches = app.subcommand_matches("reap").unwrap();
+            let result = clicommands::handle_reap(
+                connect(
+                    matches.value_of("host"),
+                    matches.value_of("port").map(|p| FromStr::from_str(p).unwrap()),
+                    matches.values_of("ca"),
+                    !matches.is_present("insecure")
+                )?,
+
+                matches.value_of("jobid").unwrap());
+            result.and_then(|job| {println!("{:?}", job); Ok(())})
         }
         _ => {
             eprintln!("Please specify a valid subcommand!");

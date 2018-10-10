@@ -22,22 +22,21 @@ pub struct Job {
     pub stderr: String,
     pub stdout: String,
     pub state: JobState,
-    pub notify_cmd: Option<String>
+    pub notify_cmd: Option<String>,
 }
 
 pub struct JobQueue {
     last_id: u64,
     queue: VecDeque<Job>,
-    finished: VecDeque<Job>,
+    finished: Vec<Job>,
 }
-
 
 impl JobQueue {
     pub fn new() -> Self {
         JobQueue {
             last_id: 0,
             queue: VecDeque::new(),
-            finished: VecDeque::new(),
+            finished: Vec::new(),
         }
     }
 
@@ -86,14 +85,14 @@ impl JobQueue {
             j.state = new_state;
             j.stdout = stdout;
             j.stderr = stderr;
-            self.finished.push_back(j.clone());
+            self.finished.push(j.clone());
             Some(j)
         } else {
             None
         }
     }
 
-    pub fn remove_finished(&mut self, id: u64) -> Result<(), ()> {
+    pub fn remove_finished(&mut self, id: u64) -> Result<Job, ()> {
         let mut index: Option<usize> = None;
 
         for (current, job) in self.finished.iter().enumerate() {
@@ -104,10 +103,7 @@ impl JobQueue {
         }
 
         if let Some(i) = index {
-            self.finished
-                .remove(i)
-                .expect("Failed to remove element from job queue");
-            Ok(())
+            Ok(self.finished.remove(i))
         } else {
             Err(())
         }

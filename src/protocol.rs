@@ -23,6 +23,7 @@ pub enum Request {
 pub enum Response {
     SubmitJob(u64),
     GetJobs(Vec<Job>),
+    GetJob(Job),
     Error(String),
     Ok,
 }

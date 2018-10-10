@@ -77,24 +77,35 @@ fn handle_client<T: Stream>(
             Request::GetQueuedJobs => {
                 let q = q_mutex.lock().unwrap();
                 let items = q.iter_queued().cloned().collect();
-                encode_and_write(&serde_json::to_string_pretty(&Response::GetJobs(items))?, &mut stream)?;
+                encode_and_write(
+                    &serde_json::to_string_pretty(&Response::GetJobs(items))?,
+                    &mut stream,
+                )?;
             }
             Request::GetFinishedJobs => {
                 let q = q_mutex.lock().unwrap();
                 let items = q.iter_finished().cloned().collect();
-                encode_and_write(&serde_json::to_string_pretty(&Response::GetJobs(items))?, &mut stream)?;
+                encode_and_write(
+                    &serde_json::to_string_pretty(&Response::GetJobs(items))?,
+                    &mut stream,
+                )?;
             }
 
             Request::ReapJob(id) => {
                 let mut q = q_mutex.lock().unwrap();
                 match q.remove_finished(id) {
-                    Ok(()) => {
-                        serde_json::to_writer(&mut stream, &Response::Ok)?;
+                    Ok(job) => {
+                        encode_and_write(
+                            &serde_json::to_string_pretty(&Response::GetJob(job))?,
+                            &mut stream,
+                        )?;
                     }
                     _ => {
-                        serde_json::to_writer(
+                        encode_and_write(
+                            &serde_json::to_string_pretty(&Response::Error(
+                                "No such job".to_string(),
+                            ))?,
                             &mut stream,
-                            &Response::Error("No such job".to_string()),
                         )?;
                     }
                 }
