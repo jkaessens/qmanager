@@ -200,15 +200,26 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
             if j.notify_cmd.is_some() {
                 let id = j.id;
                 if let Err(e) = run_notify_command(j) {
-                    eprintln!("Failed to run notify command for job {}: {}", id, e.description());
+                    eprintln!(
+                        "Failed to run notify command for job {}: {}",
+                        id,
+                        e.description()
+                    );
                 }
             }
         }
     }
 }
 
-pub fn handle(tcp_port: Option<u16>, pidfile: Option<&str>, cert: Option<&str>) -> Result<()> {
-    daemonize(pidfile)?;
+pub fn handle(
+    tcp_port: Option<u16>,
+    pidfile: Option<&str>,
+    cert: Option<&str>,
+    foreground: bool,
+) -> Result<()> {
+    if !foreground {
+        daemonize(pidfile)?;
+    }
 
     let listener = create_tcp_socket(tcp_port.unwrap_or(1337u16))?;
 

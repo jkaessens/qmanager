@@ -136,6 +136,11 @@ fn main() -> Result<()> {
         .subcommand(
             SubCommand::with_name("daemon")
                 .about("Starts the Queue Manager Daemon")
+                .arg(Arg::with_name("foreground")
+                     .long("foreground")
+                     .help("Stay in foreground, do not detach. No pidfile is created.")
+                     .conflicts_with("pidfile")
+                )
                 .arg(
                     Arg::with_name("cert")
                         .long("cert")
@@ -189,6 +194,7 @@ fn main() -> Result<()> {
                     .map(|p| FromStr::from_str(p).unwrap()),
                 matches.value_of("pidfile"),
                 matches.value_of("cert"),
+                matches.occurrences_of("foreground") > 0
             )
         }
         Some("queue-status") => {
