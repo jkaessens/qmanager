@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+
 use std::time::{Duration, SystemTime};
 //use std::os::unix::process::ExitStatusExt;
 
@@ -8,7 +9,7 @@ pub enum JobState {
     Running,
     Terminated(i32),
     Killed(i32),
-    Failed(String)
+    Failed(String),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -48,7 +49,12 @@ impl JobQueue {
         self.finished.iter()
     }
 
-    pub fn submit(&mut self, cmdline: String, expected_duration: Option<Duration>, notify_cmd: Option<String>) -> u64 {
+    pub fn submit(
+        &mut self,
+        cmdline: String,
+        expected_duration: Option<Duration>,
+        notify_cmd: Option<String>,
+    ) -> u64 {
         let job = Job {
             id: self.last_id + 1,
             cmdline,
@@ -59,7 +65,7 @@ impl JobQueue {
             stderr: String::from(""),
             stdout: String::from(""),
             state: JobState::Queued,
-            notify_cmd
+            notify_cmd,
         };
 
         self.last_id += 1;

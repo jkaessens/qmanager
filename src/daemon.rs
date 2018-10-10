@@ -1,19 +1,18 @@
-use std::fs::File;
-use std::io::{Read, Result, ErrorKind, Write};
 use std::error::Error;
+use std::fs::File;
+use std::io::{ErrorKind, Read, Result, Write};
 use std::net::{SocketAddr, TcpListener};
+use std::os::unix::process::ExitStatusExt;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::process::{Command, Stdio};
-use std::os::unix::process::ExitStatusExt;
 
 use daemonize::Daemonize;
 use native_tls::{Pkcs12, TlsAcceptor};
 use serde_json;
 
-use job_queue::{JobQueue, JobState, Job};
-use protocol::{Request, Response, read_and_decode, encode_and_write, Stream};
-
+use job_queue::{Job, JobQueue, JobState};
+use protocol::{encode_and_write, read_and_decode, Request, Response, Stream};
 
 fn daemonize(pidfile: Option<&str>) -> Result<()> {
     let logfile = File::create("/var/log/qmanager.log").unwrap();
@@ -38,7 +37,6 @@ fn create_tcp_socket(tcp_port: u16) -> Result<TcpListener> {
 }
 
 fn create_tls_acceptor(certfile: &str) -> Result<TlsAcceptor> {
-
     // load server certificate bundle
     let mut pkcs12 = vec![];
     let mut cert_file = File::open(certfile)?;
@@ -56,7 +54,6 @@ fn handle_client<T: Stream>(
     mut stream: T,
     q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>,
 ) -> Result<()> {
-
     let (ref q_mutex, ref cvar) = **q_mutex;
 
     loop {
@@ -82,6 +79,7 @@ fn handle_client<T: Stream>(
                     &mut stream,
                 )?;
             }
+
             Request::GetFinishedJobs => {
                 let q = q_mutex.lock().unwrap();
                 let items = q.iter_finished().cloned().collect();
@@ -115,7 +113,10 @@ fn handle_client<T: Stream>(
                 let mut q = q_mutex.lock().unwrap();
                 let id = q.submit(cmdline, expected_duration, notify_email);
                 cvar.notify_one();
-                encode_and_write(&serde_json::to_string_pretty(&Response::SubmitJob(id))?, &mut stream)?;
+                encode_and_write(
+                    &serde_json::to_string_pretty(&Response::SubmitJob(id))?,
+                    &mut stream,
+                )?;
             }
         }
     }
@@ -130,9 +131,7 @@ fn run_notify_command(job: Job) -> Result<()> {
         .arg(&notify_cmd)
         .stdin(Stdio::piped())
         .spawn()
-        .and_then(|mut child| {
-            child.stdin.as_mut().unwrap().write_all(body.as_bytes())
-        })
+        .and_then(|mut child| child.stdin.as_mut().unwrap().write_all(body.as_bytes()))
 }
 
 fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
@@ -158,7 +157,6 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
             }
         }
 
-
         let job = job.unwrap();
         println!("[queue runner] Running job {}", job.id);
 
@@ -170,29 +168,34 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
 
         let job = match cmd {
             Ok(output) => {
-
                 let mut q = q_mutex.lock().unwrap();
 
                 if let Some(signum) = output.status.signal() {
                     println!("[queue runner] Job was killed with signal {}", signum);
-                    q.finish(JobState::Killed(signum),
-                             String::from_utf8_lossy(&output.stdout).to_string(),
-                             String::from_utf8_lossy(&output.stderr).to_string(),
+                    q.finish(
+                        JobState::Killed(signum),
+                        String::from_utf8_lossy(&output.stdout).to_string(),
+                        String::from_utf8_lossy(&output.stderr).to_string(),
                     )
                 } else {
                     let status = output.status.code().unwrap();
                     println!("[queue runner] Job has terminated with code {}", status);
-                    q.finish(JobState::Terminated(status),
-                             String::from_utf8_lossy(&output.stdout).to_string(),
-                             String::from_utf8_lossy(&output.stderr).to_string(),
+                    q.finish(
+                        JobState::Terminated(status),
+                        String::from_utf8_lossy(&output.stdout).to_string(),
+                        String::from_utf8_lossy(&output.stderr).to_string(),
                     )
                 }
-            },
+            }
             Err(e) => {
                 let mut q = q_mutex.lock().unwrap();
                 let message = e.description().to_string();
                 println!("[queue runner] Failed to launch job: {}", message);
-                q.finish(JobState::Failed(message), String::from(""), String::from(""))
+                q.finish(
+                    JobState::Failed(message),
+                    String::from(""),
+                    String::from(""),
+                )
             }
         };
 
@@ -245,10 +248,12 @@ pub fn handle(
             Ok(stream) => {
                 println!("Client {} connected.", stream.peer_addr().unwrap());
                 match tls_acceptor {
-                    Some(ref tls) => handle_client(tls.clone().accept(stream).expect("TLS handshake failed"), &job_queue.clone())?,
-                    None => handle_client(stream, &job_queue.clone())?
+                    Some(ref tls) => handle_client(
+                        tls.clone().accept(stream).expect("TLS handshake failed"),
+                        &job_queue.clone(),
+                    )?,
+                    None => handle_client(stream, &job_queue.clone())?,
                 }
-
             }
             Err(e) => {
                 eprintln!("Connection failed: {}", e);

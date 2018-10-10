@@ -1,8 +1,6 @@
-
-use std::time::Duration;
-use std::io::Result;
 use std::io::prelude::*;
-
+use std::io::Result;
+use std::time::Duration;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
@@ -38,7 +36,6 @@ pub fn encode_and_write(source: &str, target: &mut Stream) -> Result<()> {
 }
 
 pub fn read_and_decode(source: &mut Stream) -> Result<String> {
-
     let len: u32 = source.read_u32::<LittleEndian>()?;
 
     let mut buf = vec![0; len as usize];

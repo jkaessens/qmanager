@@ -1,12 +1,11 @@
-
-use std::io::{Result};
-use std::time::Duration;
 use std::error::Error;
+use std::io::Result;
+use std::time::Duration;
 
 use serde_json;
 
 use job_queue::*;
-use protocol::{read_and_decode, encode_and_write, Request, Response, Stream};
+use protocol::{encode_and_write, read_and_decode, Request, Response, Stream};
 
 fn print_jobs(header: &str, jobs: Vec<Job>) {
     println!("{}", header);
@@ -86,8 +85,10 @@ pub fn handle_queue_status<T: Stream>(mut stream: T) -> Result<()> {
         }
     }
 
-
-    encode_and_write(&serde_json::to_string_pretty(&Request::GetFinishedJobs)?, &mut stream)?;
+    encode_and_write(
+        &serde_json::to_string_pretty(&Request::GetFinishedJobs)?,
+        &mut stream,
+    )?;
 
     let response = serde_json::from_str(&read_and_decode(&mut stream)?)?;
 

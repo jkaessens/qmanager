@@ -3,12 +3,11 @@ extern crate serde_derive;
 
 #[macro_use]
 extern crate clap;
+extern crate byteorder;
 extern crate daemonize;
 extern crate native_tls;
 extern crate serde;
 extern crate serde_json;
-extern crate byteorder;
-
 
 mod clicommands;
 mod daemon;
@@ -30,22 +29,16 @@ fn connect(
     host: Option<&str>,
     port: Option<u16>,
     ca: Option<Values>,
-    ssl: bool
+    ssl: bool,
 ) -> Result<Box<Stream>> {
-
     if ssl {
         connect_tls(host, port, ca)
     } else {
         connect_tcp(host, port)
     }
-
 }
 
-fn connect_tcp(
-    host: Option<&str>,
-    port: Option<u16>,
-) -> Result<Box<Stream>> {
-
+fn connect_tcp(host: Option<&str>, port: Option<u16>) -> Result<Box<Stream>> {
     // Set up TCP connection
     let host = host.unwrap_or("localhost");
     let port = port.unwrap_or(1337u16);
@@ -56,37 +49,32 @@ fn connect_tcp(
     // Try all addresses until one succeeds
     for addr in addrs {
         if let Ok(s) = TcpStream::connect(addr) {
-            return Ok(Box::new(s))
+            return Ok(Box::new(s));
         }
     }
 
     Err(Error::from(ErrorKind::ConnectionRefused))
 }
 
-fn connect_tls(
-    host: Option<&str>,
-    port: Option<u16>,
-    ca: Option<Values>
-) -> Result<Box<Stream>> {
-
+fn connect_tls(host: Option<&str>, port: Option<u16>, ca: Option<Values>) -> Result<Box<Stream>> {
     // Load CA certificates, if requested
 
-        let mut builder = TlsConnector::builder().unwrap();
+    let mut builder = TlsConnector::builder().unwrap();
 
-        if let Some(values) = ca {
-            for v in values {
-                // load certificate
-                let mut cert = vec![];
-                let mut cert_file = File::open(v)?;
-                cert_file
-                    .read_to_end(&mut cert)
-                    .expect("Failed to read certificate file");
+    if let Some(values) = ca {
+        for v in values {
+            // load certificate
+            let mut cert = vec![];
+            let mut cert_file = File::open(v)?;
+            cert_file
+                .read_to_end(&mut cert)
+                .expect("Failed to read certificate file");
 
-                if let Ok(c) = Certificate::from_pem(&cert) {
-                    builder.add_root_certificate(c).unwrap();
-                }
+            if let Ok(c) = Certificate::from_pem(&cert) {
+                builder.add_root_certificate(c).unwrap();
             }
         }
+    }
 
     let connector = builder.build().unwrap();
 
@@ -104,8 +92,11 @@ fn connect_tls(
         if let Ok(tcp_stream) = s {
             return Ok(Box::new(
                 connector
-                    .danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(tcp_stream)
-                    .map_err(|_e| Error::from(ErrorKind::ConnectionAborted))?));
+                    .danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(
+                        tcp_stream,
+                    )
+                    .map_err(|_e| Error::from(ErrorKind::ConnectionAborted))?,
+            ));
         }
     }
 
@@ -182,7 +173,7 @@ fn main() -> Result<()> {
                          .takes_value(true)
                          .required(true)
                     ))
-        
+
         .get_matches();
 
     match app.subcommand_name() {
@@ -194,7 +185,7 @@ fn main() -> Result<()> {
                     .map(|p| FromStr::from_str(p).unwrap()),
                 matches.value_of("pidfile"),
                 matches.value_of("cert"),
-                matches.occurrences_of("foreground") > 0
+                matches.occurrences_of("foreground") > 0,
             )
         }
         Some("queue-status") => {
@@ -205,7 +196,7 @@ fn main() -> Result<()> {
                     .value_of("port")
                     .map(|p| FromStr::from_str(p).unwrap()),
                 matches.values_of("ca"),
-                !matches.is_present("insecure")
+                !matches.is_present("insecure"),
             )?)
         }
         Some("submit") => {
@@ -213,14 +204,15 @@ fn main() -> Result<()> {
             clicommands::handle_submit(
                 connect(
                     matches.value_of("host"),
-                    matches.value_of("port").map(|p| FromStr::from_str(p).unwrap()),
+                    matches
+                        .value_of("port")
+                        .map(|p| FromStr::from_str(p).unwrap()),
                     matches.values_of("ca"),
-                    !matches.is_present("insecure")
+                    !matches.is_present("insecure"),
                 )?,
-
                 matches.value_of("cmdline").unwrap(),
                 matches.value_of("duration"),
-                matches.value_of("notify-email")
+                matches.value_of("notify-email"),
             )
         }
         Some("reap") => {
@@ -228,13 +220,18 @@ fn main() -> Result<()> {
             let result = clicommands::handle_reap(
                 connect(
                     matches.value_of("host"),
-                    matches.value_of("port").map(|p| FromStr::from_str(p).unwrap()),
+                    matches
+                        .value_of("port")
+                        .map(|p| FromStr::from_str(p).unwrap()),
                     matches.values_of("ca"),
-                    !matches.is_present("insecure")
+                    !matches.is_present("insecure"),
                 )?,
-
-                matches.value_of("jobid").unwrap());
-            result.and_then(|job| {println!("{:?}", job); Ok(())})
+                matches.value_of("jobid").unwrap(),
+            );
+            result.and_then(|job| {
+                println!("{:?}", job);
+                Ok(())
+            })
         }
         _ => {
             eprintln!("Please specify a valid subcommand!");
