@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
 
 use std::time::SystemTime;
-//use std::os::unix::process::ExitStatusExt;
+use std::process::Command;
+use std::io::{Error,ErrorKind};
+
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum JobState {
@@ -22,6 +24,7 @@ pub struct Job {
     pub stderr: String,
     pub stdout: String,
     pub state: JobState,
+    pub pid: Option<u32>,
     pub notify_cmd: Option<String>,
 }
 
@@ -58,6 +61,7 @@ impl JobQueue {
             stderr: String::from(""),
             stdout: String::from(""),
             state: JobState::Queued,
+            pid: None,
             notify_cmd,
         };
 
@@ -72,6 +76,42 @@ impl JobQueue {
             j.state = JobState::Running;
             j.clone()
         })
+    }
+
+    pub fn send_sigterm(&mut self, jobid: u64) -> Result<(), Error> {
+        eprintln!("[job queue] Trying to kill job {}", jobid);
+        match self.queue.iter().find(|j| j.state == JobState::Running && j.id == jobid) {
+            Some(job) => {
+                // It is okay to panic here, as failure to execute /bin/kill is a serious bug
+                let status = Command::new("/bin/kill")
+                    .arg("-SIGTERM")
+                    .arg(job.pid.unwrap().to_string())
+                    .status()
+                    .expect("Failed to execute kill command");
+
+                if let Some(code) = status.code() {
+                    if code == 0 {
+                        Ok(())
+                    } else {
+                        eprintln!("Could not kill job. Exit code: {}", code);
+                        Err(Error::from_raw_os_error(code))
+                    }
+                } else {
+                    panic!("kill didn't leave an exit code");
+                }
+            },
+
+            None => {
+                eprintln!("Could not find job");
+                Err(Error::from(ErrorKind::InvalidInput))
+            }
+        }
+    }
+
+    pub fn assign_pid(&mut self, jobid: u64, pid: u32) {
+        if let Some(ref mut job) = self.queue.iter_mut().find(|job| job.state == JobState::Running && job.id == jobid) {
+            job.pid = Some(pid);
+        }
     }
 
     pub fn finish(&mut self, new_state: JobState, stdout: String, stderr: String) -> Option<Job> {

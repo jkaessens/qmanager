@@ -173,6 +173,14 @@ fn main() -> Result<()> {
                     .required(true),
             ),
         )
+        .subcommand(
+            SubCommand::with_name("kill").arg(
+                Arg::with_name("jobid")
+                    .help("Job ID to send SIGTERM signal to. Note that this depends on the good manners of the process, it is not guaranteed that the job is actually terminated.")
+                    .takes_value(true)
+                    .required(true),
+            ),
+        )
         .get_matches();
 
     match app.subcommand_name() {
@@ -216,6 +224,24 @@ fn main() -> Result<()> {
         Some("reap") => {
             let matches = app.subcommand_matches("reap").unwrap();
             let result = clicommands::handle_reap(
+                connect(
+                    matches.value_of("host"),
+                    matches
+                        .value_of("port")
+                        .map(|p| FromStr::from_str(p).unwrap()),
+                    matches.values_of("ca"),
+                    !matches.is_present("insecure"),
+                )?,
+                matches.value_of("jobid").unwrap(),
+            );
+            result.and_then(|job| {
+                println!("{:?}", job);
+                Ok(())
+            })
+        },
+        Some("kill") => {
+            let matches = app.subcommand_matches("kill").unwrap();
+            let result = clicommands::handle_kill(
                 connect(
                     matches.value_of("host"),
                     matches

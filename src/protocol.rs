@@ -12,6 +12,7 @@ impl<T: Read + Write> Stream for T {}
 pub enum Request {
     SubmitJob(String, Option<String>),
     ReapJob(u64),
+    KillJob(u64),
     GetQueuedJobs,
     GetFinishedJobs,
 }
