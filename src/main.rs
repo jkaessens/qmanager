@@ -154,9 +154,12 @@ fn main() -> Result<()> {
                         .takes_value(true),
                 ),
         )
-        .subcommand(SubCommand::with_name("queue-status"))
+        .subcommand(
+            SubCommand::with_name("queue-status")
+                .about("Displays the queue status"))
         .subcommand(
             SubCommand::with_name("submit")
+                .about("Submits a job to the queue")
                 .arg(
                     Arg::with_name("notify-cmd")
                         .long("notify-cmd")
@@ -166,16 +169,18 @@ fn main() -> Result<()> {
                 .arg(Arg::with_name("cmdline").takes_value(true).required(true)),
         )
         .subcommand(
-            SubCommand::with_name("reap").arg(
-                Arg::with_name("jobid")
+            SubCommand::with_name("remove")
+                .about("Removes a job from the queue or the list of terminated jobs. Does not work for jobs that are currently running")
+                .arg(Arg::with_name("jobid")
                     .help("Job ID to retrieve and remove from the status list")
                     .takes_value(true)
                     .required(true),
             ),
         )
         .subcommand(
-            SubCommand::with_name("kill").arg(
-                Arg::with_name("jobid")
+            SubCommand::with_name("kill")
+                .about("Sends the SIGTERM signal to the job's process. Only works for jobs that are currently running.")
+                .arg(Arg::with_name("jobid")
                     .help("Job ID to send SIGTERM signal to. Note that this depends on the good manners of the process, it is not guaranteed that the job is actually terminated.")
                     .takes_value(true)
                     .required(true),
@@ -221,9 +226,9 @@ fn main() -> Result<()> {
                 matches.value_of("notify-cmd"),
             )
         }
-        Some("reap") => {
-            let matches = app.subcommand_matches("reap").unwrap();
-            let result = clicommands::handle_reap(
+        Some("remove") => {
+            let matches = app.subcommand_matches("remove").unwrap();
+            let result = clicommands::handle_remove(
                 connect(
                     matches.value_of("host"),
                     matches
