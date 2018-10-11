@@ -32,9 +32,9 @@ pub fn handle_submit<T: Stream>(mut stream: T, cmdline: &str, email: Option<&str
     Ok(())
 }
 
-pub fn handle_reap<T: Stream>(mut stream: T, jobid: &str) -> Result<Job> {
+pub fn handle_remove<T: Stream>(mut stream: T, jobid: &str) -> Result<Job> {
     encode_and_write(
-        &serde_json::to_string_pretty(&Request::ReapJob(jobid.parse::<u64>().unwrap()))?,
+        &serde_json::to_string_pretty(&Request::RemoveJob(jobid.parse::<u64>().unwrap()))?,
         &mut stream,
     )?;
 
@@ -43,7 +43,7 @@ pub fn handle_reap<T: Stream>(mut stream: T, jobid: &str) -> Result<Job> {
     match response {
         Response::GetJob(job) => Ok(job),
         Response::Error(s) => {
-            eprintln!("Could not reap job: {}", s);
+            eprintln!("Could not remove job: {}", s);
             Err(::std::io::Error::from(::std::io::ErrorKind::Other))
         }
         _ => panic!("Unexpected response: {:?}", response),

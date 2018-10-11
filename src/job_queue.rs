@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use std::time::SystemTime;
 use std::process::Command;
 use std::io::{Error,ErrorKind};
@@ -30,7 +28,7 @@ pub struct Job {
 
 pub struct JobQueue {
     last_id: u64,
-    queue: VecDeque<Job>,
+    queue: Vec<Job>,
     finished: Vec<Job>,
 }
 
@@ -38,7 +36,7 @@ impl JobQueue {
     pub fn new() -> Self {
         JobQueue {
             last_id: 0,
-            queue: VecDeque::new(),
+            queue: Vec::new(),
             finished: Vec::new(),
         }
     }
@@ -66,12 +64,12 @@ impl JobQueue {
         };
 
         self.last_id += 1;
-        self.queue.push_back(job);
+        self.queue.push(job);
         self.last_id
     }
 
     pub fn schedule(&mut self) -> Option<Job> {
-        self.queue.front_mut().map(|j| {
+        self.queue.first_mut().map(|j| {
             j.started = Some(SystemTime::now());
             j.state = JobState::Running;
             j.clone()
@@ -115,7 +113,9 @@ impl JobQueue {
     }
 
     pub fn finish(&mut self, new_state: JobState, stdout: String, stderr: String) -> Option<Job> {
-        if let Some(mut j) = self.queue.pop_front() {
+        if self.queue.len() > 0 {
+            let mut j = self.queue.remove(0);
+
             if j.state != JobState::Running {
                 panic!("Trying to finish a job that is not running: {:?}", j);
             }
@@ -131,20 +131,38 @@ impl JobQueue {
         }
     }
 
-    pub fn remove_finished(&mut self, id: u64) -> Result<Job, ()> {
-        let mut index: Option<usize> = None;
+    pub fn remove(&mut self, id: u64) -> Result<Job, ()> {
+        let mut item_index :Option<usize> = None;
 
+        // scan finished jobs
         for (current, job) in self.finished.iter().enumerate() {
             if job.id == id {
-                index = Some(current);
+                item_index = Some(current);
                 break;
             }
         }
 
-        if let Some(i) = index {
-            Ok(self.finished.remove(i))
-        } else {
-            Err(())
+        if let Some(index) = item_index {
+            return Ok(self.finished.remove(index));
         }
+
+
+        // scan queued jobs (that are not running)
+        for (current, job) in self.queue.iter().enumerate() {
+            if job.id == id {
+                if job.state == JobState::Running {
+                    return Err(());
+                } else {
+                    item_index = Some(current);
+                    break;
+                }
+            }
+        }
+
+        if let Some(index) = item_index {
+            return Ok(self.queue.remove(index));
+        }
+
+        Err(())
     }
 }

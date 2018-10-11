@@ -89,9 +89,9 @@ fn handle_client<T: Stream>(
                 )?;
             }
 
-            Request::ReapJob(id) => {
+            Request::RemoveJob(id) => {
                 let mut q = q_mutex.lock().unwrap();
-                match q.remove_finished(id) {
+                match q.remove(id) {
                     Ok(job) => {
                         encode_and_write(
                             &serde_json::to_string_pretty(&Response::GetJob(job))?,
