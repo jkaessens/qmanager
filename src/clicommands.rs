@@ -50,6 +50,24 @@ pub fn handle_reap<T: Stream>(mut stream: T, jobid: &str) -> Result<Job> {
     }
 }
 
+pub fn handle_kill<T: Stream>(mut stream: T, jobid: &str) -> Result<()> {
+    encode_and_write(
+        &serde_json::to_string_pretty(&Request::KillJob(jobid.parse::<u64>().unwrap()))?,
+        &mut stream,
+    )?;
+
+    let response = serde_json::from_str(&read_and_decode(&mut stream)?)?;
+
+    match response {
+        Response::Ok => Ok(()),
+        Response::Error(s) => {
+            eprintln!("Could not kill job: {}", s);
+            Err(::std::io::Error::from(::std::io::ErrorKind::Other))
+        }
+        _ => panic!("Unexpected response: {:?}", response),
+    }
+}
+
 pub fn handle_queue_status<T: Stream>(mut stream: T) -> Result<()> {
     let s = serde_json::to_string_pretty(&Request::GetQueuedJobs).unwrap();
     encode_and_write(&s, &mut stream)?;

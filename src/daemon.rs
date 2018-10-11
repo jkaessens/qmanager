@@ -109,6 +109,26 @@ fn handle_client<T: Stream>(
                 }
             }
 
+            Request::KillJob(id) => {
+                let mut q = q_mutex.lock().unwrap();
+                match q.send_sigterm(id) {
+                    Ok(_) => {
+                        encode_and_write(
+                            &serde_json::to_string_pretty(&Response::Ok)?,
+                            &mut stream,
+                        )?;
+                    }
+                    _ => {
+                        encode_and_write(
+                            &serde_json::to_string_pretty(&Response::Error(
+                                "No such job".to_string(),
+                            ))?,
+                            &mut stream,
+                        )?;
+                    }
+                }
+            }
+
             Request::SubmitJob(cmdline, notify_email) => {
                 let mut q = q_mutex.lock().unwrap();
                 let id = q.submit(cmdline, notify_email);
@@ -160,11 +180,27 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
         let job = job.unwrap();
         println!("[queue runner] Running job {}", job.id);
 
+        /*
+        We need to prepend 'exec' to the command line. Otherwise, the command
+        spawner would yield the PID of 'sh'. exec replaces the shell with
+        the acutal process that we would like to run, keeping the pid.
+        */
+        let cmdline_wrapper = format!("exec {}", job.cmdline);
+
         let cmd = Command::new("sh")
             .arg("-c")
-            .arg(&job.cmdline)
+            .arg(cmdline_wrapper)
             .current_dir("/")
-            .output();
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .and_then(|child| {
+                {
+                    let mut q = q_mutex.lock().unwrap();
+                    q.assign_pid(job.id, child.id());
+                }
+                child.wait_with_output()
+            });
 
         let job = match cmd {
             Ok(output) => {
