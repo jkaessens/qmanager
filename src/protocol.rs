@@ -26,7 +26,12 @@ pub enum Response {
     Ok,
 }
 
-pub fn encode_and_write(source: &str, target: &mut Stream) -> Result<()> {
+pub fn encode_and_write(source: &str, target: &mut Stream, dump: bool) -> Result<()> {
+    if dump {
+        println!("Sending:");
+        println!("{}", source);
+    }
+
     let len = source.len();
 
     target.write_u32::<LittleEndian>(len as u32)?;
@@ -35,7 +40,8 @@ pub fn encode_and_write(source: &str, target: &mut Stream) -> Result<()> {
     Ok(())
 }
 
-pub fn read_and_decode(source: &mut Stream) -> Result<String> {
+pub fn read_and_decode(source: &mut Stream, dump: bool) -> Result<String> {
+
     let len: u32 = source.read_u32::<LittleEndian>()?;
 
     let mut buf = vec![0; len as usize];
@@ -56,6 +62,12 @@ pub fn read_and_decode(source: &mut Stream) -> Result<String> {
         Err(::std::io::Error::from(::std::io::ErrorKind::InvalidData))
     } else {
         source.read_exact(&mut buf[1..len as usize])?;
-        Ok(String::from_utf8(buf).unwrap())
+
+        let s = String::from_utf8(buf).unwrap();
+        if dump {
+            println!("Receiving:");
+            println!("{}", &s);
+        }
+        Ok(s)
     }
 }

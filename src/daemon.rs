@@ -8,7 +8,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 use daemonize::Daemonize;
-use native_tls::{Pkcs12, TlsAcceptor};
+use native_tls::{Identity, TlsAcceptor};
+
 use serde_json;
 
 use job_queue::{Job, JobQueue, JobState};
@@ -44,20 +45,22 @@ fn create_tls_acceptor(certfile: &str) -> Result<TlsAcceptor> {
         .read_to_end(&mut pkcs12)
         .expect("Failed to read certificate file");
 
-    let pkcs12 = Pkcs12::from_der(&pkcs12, "cl057").expect("Failed to decode certificate");
+    // let pkcs12 = Pkcs12::from_der(&pkcs12, "cl057").expect("Failed to decode certificate");
+    let pkcs12 = Identity::from_pkcs12(&pkcs12, "cl057").expect("Failed to decode certificate");
 
-    let acceptor = TlsAcceptor::builder(pkcs12).unwrap().build().unwrap();
+    let acceptor: TlsAcceptor = TlsAcceptor::builder(pkcs12).build().unwrap();
     Ok(acceptor)
 }
 
 fn handle_client<T: Stream>(
     mut stream: T,
     q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>,
+    dump_protocol: bool
 ) -> Result<()> {
     let (ref q_mutex, ref cvar) = **q_mutex;
 
     loop {
-        let s = read_and_decode(&mut stream);
+        let s = read_and_decode(&mut stream, dump_protocol);
         if let Err(e) = s {
             if e.kind() == ErrorKind::UnexpectedEof {
                 println!("[handle_client] Disconnected");
@@ -77,6 +80,7 @@ fn handle_client<T: Stream>(
                 encode_and_write(
                     &serde_json::to_string_pretty(&Response::GetJobs(items))?,
                     &mut stream,
+                    dump_protocol
                 )?;
             }
 
@@ -86,6 +90,7 @@ fn handle_client<T: Stream>(
                 encode_and_write(
                     &serde_json::to_string_pretty(&Response::GetJobs(items))?,
                     &mut stream,
+                    dump_protocol
                 )?;
             }
 
@@ -96,6 +101,7 @@ fn handle_client<T: Stream>(
                         encode_and_write(
                             &serde_json::to_string_pretty(&Response::GetJob(job))?,
                             &mut stream,
+                            dump_protocol
                         )?;
                     }
                     _ => {
@@ -104,6 +110,7 @@ fn handle_client<T: Stream>(
                                 "No such job".to_string(),
                             ))?,
                             &mut stream,
+                            dump_protocol
                         )?;
                     }
                 }
@@ -116,6 +123,7 @@ fn handle_client<T: Stream>(
                         encode_and_write(
                             &serde_json::to_string_pretty(&Response::Ok)?,
                             &mut stream,
+                            dump_protocol
                         )?;
                     }
                     _ => {
@@ -124,6 +132,7 @@ fn handle_client<T: Stream>(
                                 "No such job".to_string(),
                             ))?,
                             &mut stream,
+                            dump_protocol
                         )?;
                     }
                 }
@@ -136,6 +145,7 @@ fn handle_client<T: Stream>(
                 encode_and_write(
                     &serde_json::to_string_pretty(&Response::SubmitJob(id))?,
                     &mut stream,
+                    dump_protocol
                 )?;
             }
         }
@@ -255,6 +265,7 @@ pub fn handle(
     pidfile: Option<&str>,
     cert: Option<&str>,
     foreground: bool,
+    dump_protocol: bool,
 ) -> Result<()> {
     if !foreground {
         daemonize(pidfile)?;
@@ -287,8 +298,9 @@ pub fn handle(
                     Some(ref tls) => handle_client(
                         tls.clone().accept(stream).expect("TLS handshake failed"),
                         &job_queue.clone(),
+                        dump_protocol
                     )?,
-                    None => handle_client(stream, &job_queue.clone())?,
+                    None => handle_client(stream, &job_queue.clone(), dump_protocol)?,
                 }
             }
             Err(e) => {
