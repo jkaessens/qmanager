@@ -59,78 +59,90 @@ fn handle_client(
 ) {
     let (ref q_mutex, ref cvar) = **q_mutex;
 
-    //loop {
-        let mut s = String::from("");
-        httprequest.as_reader().read_to_string(&mut s).unwrap();
 
-        //)read_and_decode(&mut request, dump_protocol);
-        /*
-        if let Err(e) = s {
-            if e.kind() == ErrorKind::UnexpectedEof {
-                println!("[handle_client] Disconnected");
-            } else {
-                eprintln!("[handle_client] Disconnected: {:?}", e);
-            }
-            break;
+    let mut s = String::from("");
+    httprequest.as_reader().read_to_string(&mut s).unwrap();
+
+
+    let request = serde_json::from_str(&s);
+
+    println!("[handle_client] Got request: {:?}", request);
+
+
+    let (status_code, response_s) = match request {
+        Ok(Request::GetQueuedJobs) => {
+            let q = q_mutex.lock().unwrap();
+            let items = q.iter_queued().cloned().collect();
+            (200, serde_json::to_string_pretty(&Response::GetJobs(items)).unwrap())
         }
-        */
-        let request = serde_json::from_str(&s).unwrap();
 
-        println!("[handle_client] Got request: {:?}", request);
+        Ok(Request::GetFinishedJobs) => {
+            let q = q_mutex.lock().unwrap();
+            let items = q.iter_finished().cloned().collect();
+            (200, serde_json::to_string_pretty(&Response::GetJobs(items)).unwrap())
+        }
 
-//        let mut response = tiny_http::Response::new_empty(tiny_http::StatusCode(200));
-
-
-        httprequest.respond(tiny_http::Response::from_string(match request {
-            Request::GetQueuedJobs => {
-                let q = q_mutex.lock().unwrap();
-                let items = q.iter_queued().cloned().collect();
-                serde_json::to_string_pretty(&Response::GetJobs(items)).unwrap()
-            }
-
-            Request::GetFinishedJobs => {
-                let q = q_mutex.lock().unwrap();
-                let items = q.iter_finished().cloned().collect();
-                serde_json::to_string_pretty(&Response::GetJobs(items)).unwrap()
-            }
-
-            Request::RemoveJob(id) => {
-                let mut q = q_mutex.lock().unwrap();
-                match q.remove(id) {
-                    Ok(job) => {
-                        serde_json::to_string_pretty(&Response::GetJob(job)).unwrap()
-                    }
-                    _ => {
-                        serde_json::to_string_pretty(&Response::Error(
-                                "No such job".to_string(),
-                            )).unwrap()
-                    }
+        Ok(Request::RemoveJob(id)) => {
+            let mut q = q_mutex.lock().unwrap();
+            match q.remove(id) {
+                Ok(job) => {
+                    (200, serde_json::to_string_pretty(&Response::GetJob(job)).unwrap())
+                }
+                _ => {
+                    (422, serde_json::to_string_pretty(&Response::Error(
+                            "No such job".to_string(),
+                        )).unwrap())
                 }
             }
+        }
 
-            Request::KillJob(id) => {
-                let mut q = q_mutex.lock().unwrap();
-                match q.send_sigterm(id) {
-                    Ok(_) => {
-                        serde_json::to_string_pretty(&Response::Ok).unwrap()
-                    }
-                    _ => {
-                        serde_json::to_string_pretty(&Response::Error(
-                                "No such job".to_string(),
-                            )).unwrap()
-                    }
+        Ok(Request::KillJob(id)) => {
+            let mut q = q_mutex.lock().unwrap();
+            match q.send_sigterm(id) {
+                Ok(_) => {
+                    (200, serde_json::to_string_pretty(&Response::Ok).unwrap())
+                }
+                _ => {
+                    (422, serde_json::to_string_pretty(&Response::Error(
+                            "No such job".to_string(),
+                        )).unwrap())
                 }
             }
+        }
 
-            Request::SubmitJob(cmdline, notify_email) => {
-                let mut q = q_mutex.lock().unwrap();
-                let id = q.submit(cmdline, notify_email);
-                cvar.notify_one();
-                serde_json::to_string_pretty(&Response::SubmitJob(id)).unwrap()
+        Ok(Request::SubmitJob(cmdline, notify_email)) => {
+            let mut q = q_mutex.lock().unwrap();
+            let id = q.submit(cmdline, notify_email);
+            cvar.notify_one();
+            (200, serde_json::to_string_pretty(&Response::SubmitJob(id)).unwrap())
+        }
+
+        Err(e) => {
+            if e.is_io() {
+                (500, e.description().to_owned())
+            } else {
+                (400, e.description().to_owned())
             }
-        })).unwrap();
+        }
+    };
 
-    //}
+    let mut response =
+        tiny_http::Response::from_string(response_s)
+            .with_status_code(status_code);
+
+    if status_code == 200 {
+        response.add_header(tiny_http::Header::from_bytes(
+            &b"Content-Type"[..], &b"application/json"[..]
+        ).unwrap());
+    } else {
+        response.add_header(tiny_http::Header::from_bytes(
+            &b"Content-Type"[..], &b"text/plain"[..]
+        ).unwrap());
+    }
+
+    if let Err(err) = httprequest.respond(response) {
+        eprintln!("Failed to send response to client: {:?}", err);
+    }
 }
 
 fn run_notify_command(job: Job) -> Result<()> {
