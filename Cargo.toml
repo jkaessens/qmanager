@@ -1,6 +1,6 @@
 [package]
 name = "qmanager"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["Jan Christian Kaessens <j.kaessens@ikmb.uni-kiel.de>"]
 
 [dependencies]
@@ -11,4 +11,8 @@ serde_derive = "1"
 daemonize = "0.3"
 native-tls = "0.2"
 byteorder = "1"
+
+tiny_http = {version = "*", features = ["ssl"]}
+reqwest = "*"
+
 

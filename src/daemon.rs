@@ -1,19 +1,19 @@
 use std::error::Error;
 use std::fs::File;
-use std::io::{ErrorKind, Read, Result, Write};
-use std::net::{SocketAddr, TcpListener};
+use std::io::{Result, Write};
+use std::net::{SocketAddr};
 use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 use daemonize::Daemonize;
-use native_tls::{Identity, TlsAcceptor};
+use tiny_http::{Server, SslConfig};
 
 use serde_json;
 
 use job_queue::{Job, JobQueue, JobState};
-use protocol::{encode_and_write, read_and_decode, Request, Response, Stream};
+use protocol::{Request, Response};
 
 fn daemonize(pidfile: Option<&str>) -> Result<()> {
     let logfile = File::create("/var/log/qmanager.log").unwrap();
@@ -31,36 +31,40 @@ fn daemonize(pidfile: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn create_tcp_socket(tcp_port: u16) -> Result<TcpListener> {
+fn spawn_https(tcp_port: u16, cert: Option<Vec<u8>>, key: Option<Vec<u8>>) -> std::result::Result<Server, Box<Error+Sync+Send>> {
     let bind_address = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], tcp_port));
-    let listener = TcpListener::bind(bind_address)?;
-    Ok(listener)
+
+    if cert.is_some() ^ key.is_some() {
+        panic!("You must either provide an SSL certificate AND private key or none of them.");
+    }
+
+    match cert {
+        Some(c) => {
+            let ssl_config = SslConfig {
+                certificate: c,
+                private_key: key.unwrap()
+            };
+            Server::https(bind_address, ssl_config)
+        }
+        None => {
+            Server::http(bind_address)
+        }
+    }
 }
 
-fn create_tls_acceptor(certfile: &str) -> Result<TlsAcceptor> {
-    // load server certificate bundle
-    let mut pkcs12 = vec![];
-    let mut cert_file = File::open(certfile)?;
-    cert_file
-        .read_to_end(&mut pkcs12)
-        .expect("Failed to read certificate file");
 
-    // let pkcs12 = Pkcs12::from_der(&pkcs12, "cl057").expect("Failed to decode certificate");
-    let pkcs12 = Identity::from_pkcs12(&pkcs12, "cl057").expect("Failed to decode certificate");
-
-    let acceptor: TlsAcceptor = TlsAcceptor::builder(pkcs12).build().unwrap();
-    Ok(acceptor)
-}
-
-fn handle_client<T: Stream>(
-    mut stream: T,
-    q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>,
-    dump_protocol: bool
-) -> Result<()> {
+fn handle_client(
+    mut httprequest: tiny_http::Request,
+    q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>
+) {
     let (ref q_mutex, ref cvar) = **q_mutex;
 
-    loop {
-        let s = read_and_decode(&mut stream, dump_protocol);
+    //loop {
+        let mut s = String::from("");
+        httprequest.as_reader().read_to_string(&mut s).unwrap();
+
+        //)read_and_decode(&mut request, dump_protocol);
+        /*
         if let Err(e) = s {
             if e.kind() == ErrorKind::UnexpectedEof {
                 println!("[handle_client] Disconnected");
@@ -69,49 +73,37 @@ fn handle_client<T: Stream>(
             }
             break;
         }
-        let request = serde_json::from_str(&s.unwrap())?;
+        */
+        let request = serde_json::from_str(&s).unwrap();
 
         println!("[handle_client] Got request: {:?}", request);
 
-        match request {
+//        let mut response = tiny_http::Response::new_empty(tiny_http::StatusCode(200));
+
+
+        httprequest.respond(tiny_http::Response::from_string(match request {
             Request::GetQueuedJobs => {
                 let q = q_mutex.lock().unwrap();
                 let items = q.iter_queued().cloned().collect();
-                encode_and_write(
-                    &serde_json::to_string_pretty(&Response::GetJobs(items))?,
-                    &mut stream,
-                    dump_protocol
-                )?;
+                serde_json::to_string_pretty(&Response::GetJobs(items)).unwrap()
             }
 
             Request::GetFinishedJobs => {
                 let q = q_mutex.lock().unwrap();
                 let items = q.iter_finished().cloned().collect();
-                encode_and_write(
-                    &serde_json::to_string_pretty(&Response::GetJobs(items))?,
-                    &mut stream,
-                    dump_protocol
-                )?;
+                serde_json::to_string_pretty(&Response::GetJobs(items)).unwrap()
             }
 
             Request::RemoveJob(id) => {
                 let mut q = q_mutex.lock().unwrap();
                 match q.remove(id) {
                     Ok(job) => {
-                        encode_and_write(
-                            &serde_json::to_string_pretty(&Response::GetJob(job))?,
-                            &mut stream,
-                            dump_protocol
-                        )?;
+                        serde_json::to_string_pretty(&Response::GetJob(job)).unwrap()
                     }
                     _ => {
-                        encode_and_write(
-                            &serde_json::to_string_pretty(&Response::Error(
+                        serde_json::to_string_pretty(&Response::Error(
                                 "No such job".to_string(),
-                            ))?,
-                            &mut stream,
-                            dump_protocol
-                        )?;
+                            )).unwrap()
                     }
                 }
             }
@@ -120,20 +112,12 @@ fn handle_client<T: Stream>(
                 let mut q = q_mutex.lock().unwrap();
                 match q.send_sigterm(id) {
                     Ok(_) => {
-                        encode_and_write(
-                            &serde_json::to_string_pretty(&Response::Ok)?,
-                            &mut stream,
-                            dump_protocol
-                        )?;
+                        serde_json::to_string_pretty(&Response::Ok).unwrap()
                     }
                     _ => {
-                        encode_and_write(
-                            &serde_json::to_string_pretty(&Response::Error(
+                        serde_json::to_string_pretty(&Response::Error(
                                 "No such job".to_string(),
-                            ))?,
-                            &mut stream,
-                            dump_protocol
-                        )?;
+                            )).unwrap()
                     }
                 }
             }
@@ -142,15 +126,11 @@ fn handle_client<T: Stream>(
                 let mut q = q_mutex.lock().unwrap();
                 let id = q.submit(cmdline, notify_email);
                 cvar.notify_one();
-                encode_and_write(
-                    &serde_json::to_string_pretty(&Response::SubmitJob(id))?,
-                    &mut stream,
-                    dump_protocol
-                )?;
+                serde_json::to_string_pretty(&Response::SubmitJob(id)).unwrap()
             }
-        }
-    }
-    Ok(())
+        })).unwrap();
+
+    //}
 }
 
 fn run_notify_command(job: Job) -> Result<()> {
@@ -263,14 +243,15 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
 pub fn handle(
     tcp_port: Option<u16>,
     pidfile: Option<&str>,
-    cert: Option<&str>,
+    cert: Option<Vec<u8>>,
+    key: Option<Vec<u8>>,
     foreground: bool,
-    dump_protocol: bool,
 ) -> Result<()> {
     if !foreground {
         daemonize(pidfile)?;
     }
 
+    /*
     let listener = create_tcp_socket(tcp_port.unwrap_or(1337u16))?;
 
     // set up TLS certificates if requested
@@ -279,6 +260,9 @@ pub fn handle(
     } else {
         None
     };
+    */
+
+    let httpd = spawn_https(tcp_port.unwrap_or(1337u16), cert, key).unwrap();
 
     let job_queue = Arc::new((Mutex::new(JobQueue::new()), Condvar::new()));
 
@@ -290,23 +274,11 @@ pub fn handle(
         .spawn(move || run_queue(&queue_runner_q));
 
     // handle incoming TCP connections
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                println!("Client {} connected.", stream.peer_addr().unwrap());
-                match tls_acceptor {
-                    Some(ref tls) => handle_client(
-                        tls.clone().accept(stream).expect("TLS handshake failed"),
-                        &job_queue.clone(),
-                        dump_protocol
-                    )?,
-                    None => handle_client(stream, &job_queue.clone(), dump_protocol)?,
-                }
-            }
-            Err(e) => {
-                eprintln!("Connection failed: {}", e);
-            }
-        }
+    for request in httpd.incoming_requests() {
+        println!("Request: {:?}", request);
+
+        //println!("Client {} connected.", stream.peer_addr().unwrap());
+        handle_client(request, &job_queue.clone());
     }
 
     queue_runner.unwrap().join().unwrap();

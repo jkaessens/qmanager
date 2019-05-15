@@ -9,102 +9,29 @@ extern crate native_tls;
 extern crate serde;
 extern crate serde_json;
 
+extern crate reqwest;
+extern crate tiny_http;
+
 mod clicommands;
 mod daemon;
 mod job_queue;
 mod protocol;
+mod transport;
 
 use std::fs::File;
 use std::io::prelude::*;
-use std::io::{Error, ErrorKind, Result};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::io::Result;
 use std::str::FromStr;
 
-use clap::{App, Arg, SubCommand, Values};
-use native_tls::{Certificate, TlsConnector};
+use clap::{App, Arg, SubCommand};
 
-use protocol::Stream;
 
-const DEFAULT_HOST: &'static str = "localhost";
-const DEFAULT_PORT: u16 = 1337;
+fn slurp_file(filename: &str) -> Result<Vec<u8>> {
+    let mut f = File::open(filename)?;
+    let mut buf = Vec::new();
 
-fn connect(
-    host: Option<&str>,
-    port: Option<u16>,
-    ca: Option<Values>,
-    ssl: bool,
-) -> Result<Box<Stream>> {
-    if ssl {
-        connect_tls(host.unwrap_or(DEFAULT_HOST), port.unwrap_or(DEFAULT_PORT), ca)
-    } else {
-        connect_tcp(host.unwrap_or(DEFAULT_HOST), port.unwrap_or(DEFAULT_PORT))
-    }
-}
-
-fn connect_tcp(host: &str, port: u16) -> Result<Box<Stream>> {
-    // Resolve IP(s) for given hostname
-    let addrs = (host, port).to_socket_addrs()?;
-
-    // Try all addresses until one succeeds
-    for addr in addrs {
-        if let Ok(s) = TcpStream::connect(addr) {
-            return Ok(Box::new(s));
-        }
-    }
-
-    Err(Error::from(ErrorKind::ConnectionRefused))
-}
-
-fn connect_tls(host: &str, port: u16, ca: Option<Values>) -> Result<Box<Stream>> {
-    // Load CA certificates, if requested
-
-    let mut builder = TlsConnector::builder();
-
-    if let Some(values) = ca {
-        for v in values {
-            // load certificate
-            let mut cert = vec![];
-            let mut cert_file = File::open(v)?;
-            cert_file
-                .read_to_end(&mut cert)
-                .expect("Failed to read certificate file");
-
-            if let Ok(c) = Certificate::from_pem(&cert) {
-                builder.add_root_certificate(c);
-            }
-        }
-    }
-
-    let connector = builder
-        .use_sni(false)
-        .danger_accept_invalid_certs(true)
-        .danger_accept_invalid_hostnames(true)
-        .build().unwrap();
-
-    eprintln!("Warning: SNI is currently disabled");
-    eprintln!("Warning: Certificate validation is currently disabled");
-    eprintln!("Warning: Hostname validation is currently disabled");
-
-    // Resolve IP(s) for given hostname
-    let addrs = (host, port).to_socket_addrs()?;
-
-    // Try all addresses until one succeeds
-    for addr in addrs {
-        let s = TcpStream::connect(addr);
-
-        if let Ok(tcp_stream) = s {
-            return Ok(Box::new(
-                connector
-                    .connect(
-                        "invalid-domain",
-                        tcp_stream,
-                    )
-                    .map_err(|_e| Error::from(ErrorKind::ConnectionAborted))?,
-            ));
-        }
-    }
-
-    Err(Error::from(ErrorKind::ConnectionRefused))
+    f.read_to_end(&mut buf)?;
+    Ok(buf)
 }
 
 fn main() -> Result<()> {
@@ -146,10 +73,20 @@ fn main() -> Result<()> {
                 .arg(
                     Arg::with_name("cert")
                         .long("cert")
-                        .help("Set SSL Certificate")
+                        .help("Set SSL certificate")
                         .takes_value(true)
                         .conflicts_with("insecure")
-                        .required_unless("insecure"),
+                        .required_unless("insecure")
+                        .requires("key"),
+                )
+                .arg(
+                    Arg::with_name("key")
+                        .long("key")
+                        .help("Private key for SSL certificate")
+                        .takes_value(true)
+                        .conflicts_with("insecure")
+                        .requires("cert")
+                        .required_unless("insecure")
                 )
                 .arg(
                     Arg::with_name("port")
@@ -198,87 +135,101 @@ fn main() -> Result<()> {
         )
         .get_matches();
 
-    match app.subcommand_name() {
-        Some("daemon") => {
+    let subcommand = app.subcommand_name().unwrap_or_else(|| panic!("Please specify a valid subcommand!"));
+
+    if subcommand == "daemon" {
             let matches = app.subcommand_matches("daemon").unwrap();
+
+            let cert = if let Some(fname) = matches.value_of("cert") {
+                Some(slurp_file(fname)?)
+            }  else {
+                None
+            };
+
+            let key = if let Some(fname) = matches.value_of("key") {
+                Some(slurp_file(fname)?)
+            }  else {
+                None
+            };
+
             daemon::handle(
                 matches
                     .value_of("port")
                     .map(|p| FromStr::from_str(p).unwrap()),
                 matches.value_of("pidfile"),
-                matches.value_of("cert"),
-                matches.occurrences_of("foreground") > 0,
-                matches.is_present("dump-json")
+                cert,
+                key,
+                matches.occurrences_of("foreground") > 0
             )
         }
-        Some("queue-status") => {
-            let matches = app.subcommand_matches("queue-status").unwrap();
-            clicommands::handle_queue_status(connect(
-                matches.value_of("host"),
-                matches
-                    .value_of("port")
-                    .map(|p| FromStr::from_str(p).unwrap()),
-                matches.values_of("ca"),
-                !matches.is_present("insecure"),
-            )?,matches.is_present("dump-json"))
-        }
-        Some("submit") => {
-            let matches = app.subcommand_matches("submit").unwrap();
-            clicommands::handle_submit(
-                connect(
-                    matches.value_of("host"),
-                    matches
-                        .value_of("port")
-                        .map(|p| FromStr::from_str(p).unwrap()),
-                    matches.values_of("ca"),
-                    !matches.is_present("insecure"),
-                )?,
-                matches.value_of("cmdline").unwrap(),
-                matches.value_of("notify-cmd"),
-                matches.is_present("dump-json")
-            )
-        }
-        Some("remove") => {
-            let matches = app.subcommand_matches("remove").unwrap();
-            let result = clicommands::handle_remove(
-                connect(
-                    matches.value_of("host"),
-                    matches
-                        .value_of("port")
-                        .map(|p| FromStr::from_str(p).unwrap()),
-                    matches.values_of("ca"),
-                    !matches.is_present("insecure"),
-                )?,
-                matches.value_of("jobid").unwrap(),
-                matches.is_present("dump-json")
-            );
-            result.and_then(|job| {
-                println!("{:?}", job);
+    else {
+
+        let client = if app.is_present("insecure") {
+            reqwest::Client::new()
+        } else {
+            let mut buf = Vec::new();
+            File::open(app.value_of("ca").unwrap())?.read_to_end(&mut buf).unwrap();
+            let pkcs12 = reqwest::Certificate::from_pem(&buf).unwrap();
+            reqwest::Client::builder()
+                .add_root_certificate(pkcs12)
+                .danger_accept_invalid_certs(true)
+                .danger_accept_invalid_hostnames(true)
+                .build().unwrap()
+        };
+
+        let url = if app.is_present("insecure") {
+            reqwest::Url::parse(&format!("http://{}:{}/",
+                                         app.value_of("host").unwrap_or("localhost"),
+                                         app.value_of("port").unwrap_or("1337")))
+                .unwrap()
+        } else {
+            reqwest::Url::parse(&format!("http://{}:{}/",
+                                         app.value_of("host").unwrap_or("localhost"),
+                                         app.value_of("port").unwrap_or("1337")))
+                .unwrap()
+        };
+
+        match subcommand {
+            "queue-status" => {
+                let matches = app.subcommand_matches("queue-status").unwrap();
+                clicommands::handle_queue_status(&client, url,
+                                                 matches.is_present("dump-json"))
+            }
+            "submit" => {
+                let matches = app.subcommand_matches("submit").unwrap();
+                clicommands::handle_submit(&client, url,
+                    matches.value_of("cmdline").unwrap(),
+                    matches.value_of("notify-cmd"),
+                    matches.is_present("dump-json")
+                )
+            }
+            "remove" => {
+                let matches = app.subcommand_matches("remove").unwrap();
+                let result = clicommands::handle_remove(& client, url,
+                    matches.value_of("jobid").unwrap(),
+                    matches.is_present("dump-json")
+                );
+                result.and_then(|job| {
+                    println!("{:?}", job);
+                    Ok(())
+                })
+            },
+            "kill" => {
+                let matches = app.subcommand_matches("kill").unwrap();
+                let result = clicommands::handle_kill(
+                    & client, url,
+                    matches.value_of("jobid").unwrap(),
+                    matches.is_present("dump-json")
+                );
+                result.and_then(|job| {
+                    println!("{:?}", job);
+                    Ok(())
+                })
+            }
+            _ => {
+                eprintln!("Please specify a valid subcommand!");
                 Ok(())
-            })
-        },
-        Some("kill") => {
-            let matches = app.subcommand_matches("kill").unwrap();
-            let result = clicommands::handle_kill(
-                connect(
-                    matches.value_of("host"),
-                    matches
-                        .value_of("port")
-                        .map(|p| FromStr::from_str(p).unwrap()),
-                    matches.values_of("ca"),
-                    !matches.is_present("insecure"),
-                )?,
-                matches.value_of("jobid").unwrap(),
-                matches.is_present("dump-json")
-            );
-            result.and_then(|job| {
-                println!("{:?}", job);
-                Ok(())
-            })
-        }
-        _ => {
-            eprintln!("Please specify a valid subcommand!");
-            Ok(())
-        }
-    }
+            }
+        } // match
+    } // if daemon
 }

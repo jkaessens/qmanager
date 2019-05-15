@@ -3,7 +3,7 @@ use std::io::Result;
 use serde_json;
 
 use job_queue::*;
-use protocol::{encode_and_write, read_and_decode, Request, Response, Stream};
+use protocol::{Request, Response};
 
 fn print_jobs(header: &str, jobs: Vec<Job>) {
     println!("{}", header);
@@ -12,24 +12,27 @@ fn print_jobs(header: &str, jobs: Vec<Job>) {
     }
 }
 
-pub fn handle_submit<T: Stream>(mut stream: T,
+pub fn handle_submit(client: &reqwest::Client,
+                                url: reqwest::Url,
                                 cmdline: &str,
                                 notifycmd: Option<&str>,
                                 dump_protocol: bool) -> Result<()> {
 
-    let request = &serde_json::to_string_pretty(&Request::SubmitJob(
+    let request_s = serde_json::to_string_pretty(&Request::SubmitJob(
         cmdline.to_string(),
         notifycmd.map(|s| s.to_string())))?;
 
+    let mut response_req = client.post(url.clone()).body(request_s.clone()).send().unwrap();
+    if dump_protocol {
+        println!("Sent: {} ", request_s);
+    }
 
-    encode_and_write(request,
-        &mut stream,
-        dump_protocol
-    )?;
+    let response_s = response_req.text().unwrap();
+    if dump_protocol {
+        println!("Received: {} ", response_s);
+    }
+    let response = serde_json::from_str(&response_s)?;
 
-
-    // Daemon returns associated Job ID
-    let response = serde_json::from_str(&read_and_decode(&mut stream, dump_protocol)?)?;
     match response {
         Response::SubmitJob(id) => println!("Submitted as job #{}", id),
         Response::Error(s) => eprintln!("Could not submit job: {}", s),
@@ -39,14 +42,24 @@ pub fn handle_submit<T: Stream>(mut stream: T,
     Ok(())
 }
 
-pub fn handle_remove<T: Stream>(mut stream: T, jobid: &str, dump_protocol: bool) -> Result<Job> {
-    encode_and_write(
-        &serde_json::to_string_pretty(&Request::RemoveJob(jobid.parse::<u64>().unwrap()))?,
-        &mut stream,
-        dump_protocol
-    )?;
+pub fn handle_remove(client: &reqwest::Client,
+                                url: reqwest::Url,
+                                jobid: &str,
+                                dump_protocol: bool) -> Result<Job> {
 
-    let response = serde_json::from_str(&read_and_decode(&mut stream, dump_protocol)?)?;
+    let request_s = serde_json::to_string_pretty(
+        &Request::RemoveJob(jobid.parse::<u64>().unwrap()))?;
+    let mut response_req = client.post(url.clone()).body(request_s.clone()).send().unwrap();
+    if dump_protocol {
+        println!("Sent: {} ", request_s);
+    }
+
+    let response_s = response_req.text().unwrap();
+    if dump_protocol {
+        println!("Received: {} ", response_s);
+    }
+    let response = serde_json::from_str(&response_s)?;
+
 
     match response {
         Response::GetJob(job) => Ok(job),
@@ -58,14 +71,23 @@ pub fn handle_remove<T: Stream>(mut stream: T, jobid: &str, dump_protocol: bool)
     }
 }
 
-pub fn handle_kill<T: Stream>(mut stream: T, jobid: &str, dump_protocol: bool) -> Result<()> {
-    encode_and_write(
-        &serde_json::to_string_pretty(&Request::KillJob(jobid.parse::<u64>().unwrap()))?,
-        &mut stream,
-        dump_protocol
-    )?;
+pub fn handle_kill(client: &reqwest::Client,
+                              url: reqwest::Url,
+                              jobid: &str,
+                              dump_protocol: bool) -> Result<()> {
+    let request_s = serde_json::to_string_pretty(
+        &Request::KillJob(jobid.parse::<u64>().unwrap()))?;
 
-    let response = serde_json::from_str(&read_and_decode(&mut stream, dump_protocol)?)?;
+    let mut response_req = client.post(url.clone()).body(request_s.clone()).send().unwrap();
+    if dump_protocol {
+        println!("Sent: {} ", request_s);
+    }
+
+    let response_s = response_req.text().unwrap();
+    if dump_protocol {
+        println!("Received: {} ", response_s);
+    }
+    let response = serde_json::from_str(&response_s)?;
 
     match response {
         Response::Ok => Ok(()),
@@ -77,11 +99,21 @@ pub fn handle_kill<T: Stream>(mut stream: T, jobid: &str, dump_protocol: bool) -
     }
 }
 
-pub fn handle_queue_status<T: Stream>(mut stream: T, dump_protocol: bool) -> Result<()> {
-    let s = serde_json::to_string_pretty(&Request::GetQueuedJobs).unwrap();
-    encode_and_write(&s, &mut stream, dump_protocol)?;
+pub fn handle_queue_status(client: &reqwest::Client,
+                                      url: reqwest::Url,
+                                      dump_protocol: bool) -> Result<()> {
+    let mut request_s = serde_json::to_string_pretty(&Request::GetQueuedJobs).unwrap();
 
-    let response = serde_json::from_str(&read_and_decode(&mut stream, dump_protocol)?)?;
+    let mut response_req = client.post(url.clone()).body(request_s.clone()).send().unwrap();
+    if dump_protocol {
+        println!("Sent: {} ", request_s);
+    }
+
+    let response_s = response_req.text().unwrap();
+    if dump_protocol {
+        println!("Received: {} ", response_s);
+    }
+    let mut response = serde_json::from_str(&response_s)?;
 
     match response {
         Response::GetJobs(jobs) => print_jobs("QUEUED JOBS", jobs),
@@ -93,14 +125,18 @@ pub fn handle_queue_status<T: Stream>(mut stream: T, dump_protocol: bool) -> Res
         }
     }
 
-    encode_and_write(
-        &serde_json::to_string_pretty(&Request::GetFinishedJobs)?,
-        &mut stream,
-        dump_protocol
-    )?;
 
-    let response = serde_json::from_str(&read_and_decode(&mut stream, dump_protocol)?)?;
+    request_s = serde_json::to_string_pretty(&Request::GetFinishedJobs).unwrap();
+    response_req = client.post(url.clone()).body(request_s.clone()).send().unwrap();
+    if dump_protocol {
+        println!("Sent: {} ", request_s);
+    }
 
+    let response_s = response_req.text().unwrap();
+    if dump_protocol {
+        println!("Received: {} ", response_s);
+    }
+    response = serde_json::from_str(&response_s)?;
     match response {
         Response::GetJobs(jobs) => print_jobs("FINISHED JOBS", jobs),
         Response::Error(s) => {

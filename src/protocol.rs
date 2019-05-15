@@ -1,9 +1,7 @@
 use std::io::prelude::*;
-use std::io::Result;
-
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use job_queue::Job;
+
 
 pub trait Stream: Read + Write {}
 impl<T: Read + Write> Stream for T {}
@@ -26,6 +24,7 @@ pub enum Response {
     Ok,
 }
 
+/*
 pub fn encode_and_write(source: &str, target: &mut Stream, dump: bool) -> Result<()> {
     if dump {
         println!("Sending:");
@@ -40,7 +39,7 @@ pub fn encode_and_write(source: &str, target: &mut Stream, dump: bool) -> Result
     Ok(())
 }
 
-pub fn read_and_decode(source: &mut Stream, dump: bool) -> Result<String> {
+pub fn read_and_decode(source: &mut Request, dump: bool) -> Result<String> {
 
     let len: u32 = source.read_u32::<LittleEndian>()?;
 
@@ -71,3 +70,4 @@ pub fn read_and_decode(source: &mut Stream, dump: bool) -> Result<String> {
         Ok(s)
     }
 }
+*/
