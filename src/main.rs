@@ -159,7 +159,8 @@ fn main() -> Result<()> {
                 matches.value_of("pidfile"),
                 cert,
                 key,
-                matches.occurrences_of("foreground") > 0
+                matches.is_present("foreground"),
+                matches.is_present("dump-json")
             )
         }
     else {

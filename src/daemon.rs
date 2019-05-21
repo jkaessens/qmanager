@@ -55,7 +55,8 @@ fn spawn_https(tcp_port: u16, cert: Option<Vec<u8>>, key: Option<Vec<u8>>) -> st
 
 fn handle_client(
     mut httprequest: tiny_http::Request,
-    q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>
+    q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>,
+    dump_protocol: bool,
 ) {
     let (ref q_mutex, ref cvar) = **q_mutex;
 
@@ -63,10 +64,12 @@ fn handle_client(
     let mut s = String::from("");
     httprequest.as_reader().read_to_string(&mut s).unwrap();
 
-
+    if dump_protocol {
+        println!("[handle_client] Got data: {}", &s);
+    }
     let request = serde_json::from_str(&s);
 
-    println!("[handle_client] Got request: {:?}", request);
+    println!("[handle_client] Parsed request: {:?}", request);
 
 
     let (status_code, response_s) = match request {
@@ -125,6 +128,10 @@ fn handle_client(
             }
         }
     };
+
+    if dump_protocol {
+        println!("[handle_client] Sending HTTP {} response: {}", status_code, &response_s);
+    }
 
     let mut response =
         tiny_http::Response::from_string(response_s)
@@ -258,6 +265,7 @@ pub fn handle(
     cert: Option<Vec<u8>>,
     key: Option<Vec<u8>>,
     foreground: bool,
+    dump_protocol: bool,
 ) -> Result<()> {
     if !foreground {
         daemonize(pidfile)?;
@@ -290,7 +298,7 @@ pub fn handle(
         println!("Request: {:?}", request);
 
         //println!("Client {} connected.", stream.peer_addr().unwrap());
-        handle_client(request, &job_queue.clone());
+        handle_client(request, &job_queue.clone(), dump_protocol);
     }
 
     queue_runner.unwrap().join().unwrap();
