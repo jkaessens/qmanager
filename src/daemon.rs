@@ -282,7 +282,12 @@ pub fn handle(
     };
     */
 
-    let httpd = spawn_https(tcp_port.unwrap_or(1337u16), cert, key).unwrap();
+    let tcp_port = tcp_port.unwrap_or(1337u16);
+
+    let httpd = match spawn_https(tcp_port, cert, key) {
+        Ok(s) => s,
+        Err(e) => panic!("Could not set up listening socket on port {}: {}", tcp_port, e.description())
+    };
 
     let job_queue = Arc::new((Mutex::new(JobQueue::new()), Condvar::new()));
 
