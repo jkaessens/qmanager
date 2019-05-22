@@ -12,6 +12,8 @@ extern crate serde_json;
 extern crate reqwest;
 extern crate tiny_http;
 
+extern crate nix;
+
 mod clicommands;
 mod daemon;
 mod job_queue;

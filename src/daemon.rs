@@ -18,7 +18,11 @@ use protocol::{Request, Response};
 fn daemonize(pidfile: Option<&str>) -> Result<()> {
     let logfile = File::create("/var/log/qmanager.log").unwrap();
     let errfile = File::create("/var/log/qmanager.errors").unwrap();
-    let pidfile = pidfile.unwrap_or("/var/run/user/1000/qmanager.pid");
+
+    let uid = nix::unistd::Uid::current().as_raw();
+    let pidfile_default = &format!("/run/user/{}/qmanager.pid", uid);
+
+    let pidfile = pidfile.unwrap_or(pidfile_default);
 
     if let Err(e) = Daemonize::new()
         .pid_file(pidfile)
