@@ -3,15 +3,11 @@ extern crate serde_derive;
 
 #[macro_use]
 extern crate clap;
-extern crate byteorder;
 extern crate daemonize;
-extern crate native_tls;
 extern crate serde;
 extern crate serde_json;
-
 extern crate reqwest;
 extern crate tiny_http;
-
 extern crate nix;
 
 mod clicommands;

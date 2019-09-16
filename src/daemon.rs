@@ -159,12 +159,21 @@ fn handle_client(
 fn run_notify_command(job: Job) -> Result<()> {
     let body = serde_json::to_string_pretty(&job).unwrap();
     let notify_cmd = job.notify_cmd.unwrap();
-    Command::new("sh")
+    match Command::new("sh")
         .arg("-c")
         .arg(&notify_cmd)
         .stdin(Stdio::piped())
-        .spawn()
-        .and_then(|mut child| child.stdin.as_mut().unwrap().write_all(body.as_bytes()))
+        .spawn() {
+        Ok(mut child) => {
+            child.stdin.as_mut().unwrap().write_all(body.as_bytes())?;
+            child.wait()?;
+        },
+        Err(_) => {
+            println!("[queue runner] Failed to run notify command '{}'", notify_cmd);
+        }
+    };
+
+    Ok(())
 }
 
 fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
