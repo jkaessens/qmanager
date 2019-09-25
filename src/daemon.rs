@@ -1,33 +1,29 @@
 use std::error::Error;
-use std::fs::File;
 use std::io::{Result, Write};
 use std::net::{SocketAddr};
 use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::path::PathBuf;
 
 use daemonize::Daemonize;
 use tiny_http::{Server, SslConfig};
+use systemd::daemon;
 
 use serde_json;
 
 use job_queue::{Job, JobQueue, JobState};
 use protocol::{Request, Response};
 
-fn daemonize(pidfile: Option<&str>) -> Result<()> {
-    let logfile = File::create("/var/log/qmanager.log").unwrap();
-    let errfile = File::create("/var/log/qmanager.errors").unwrap();
-
+fn daemonize(pidfile: Option<PathBuf>) -> Result<()> {
     let uid = nix::unistd::Uid::current().as_raw();
-    let pidfile_default = &format!("/run/user/{}/qmanager.pid", uid);
+    let pidfile_default = PathBuf::from(&format!("/run/user/{}/qmanager.pid", uid));
 
     let pidfile = pidfile.unwrap_or(pidfile_default);
 
     if let Err(e) = Daemonize::new()
         .pid_file(pidfile)
-        .stdout(logfile)
-        .stderr(errfile)
         .start()
     {
         eprintln!("Failed to daemonize: {}", e);
@@ -69,11 +65,11 @@ fn handle_client(
     httprequest.as_reader().read_to_string(&mut s).unwrap();
 
     if dump_protocol {
-        println!("[handle_client] Got data: {}", &s);
+        debug!("[handle_client] Got data: {}", &s);
     }
     let request = serde_json::from_str(&s);
 
-    println!("[handle_client] Parsed request: {:?}", request);
+    debug!("[handle_client] Processing request: {:?}", request);
 
 
     let (status_code, response_s) = match request {
@@ -134,7 +130,9 @@ fn handle_client(
     };
 
     if dump_protocol {
-        println!("[handle_client] Sending HTTP {} response: {}", status_code, &response_s);
+        debug!("[handle_client] Returning {} response: {}", status_code, &response_s);
+    } else if status_code != 200 {
+        info!("[handle_client] Sending errorneous status code {} with response: {}", status_code, &response_s);
     }
 
     let mut response =
@@ -169,7 +167,7 @@ fn run_notify_command(job: Job) -> Result<()> {
             child.wait()?;
         },
         Err(_) => {
-            println!("[queue runner] Failed to run notify command '{}'", notify_cmd);
+            error!("[queue runner] Failed to run notify command '{}'", notify_cmd);
         }
     };
 
@@ -178,8 +176,6 @@ fn run_notify_command(job: Job) -> Result<()> {
 
 fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
     let (ref q_mutex, ref cvar) = **q_mutex;
-
-    println!("[queue runner] Now active");
 
     loop {
         let mut job: Option<Job> = None;
@@ -192,15 +188,15 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
                 job = Some(j);
                 break;
             } else {
-                println!("[queue runner] Falling asleep");
+                debug!("[queue runner] Falling asleep");
                 q = cvar.wait(q).unwrap();
-                println!("[queue runner] Woke up");
+                debug!("[queue runner] Woke up");
                 job = q.schedule();
             }
         }
 
         let job = job.unwrap();
-        println!("[queue runner] Running job {}", job.id);
+        info!("[queue runner] Running job {}", job.id);
 
         /*
         We need to prepend 'exec' to the command line. Otherwise, the command
@@ -229,7 +225,7 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
                 let mut q = q_mutex.lock().unwrap();
 
                 if let Some(signum) = output.status.signal() {
-                    println!("[queue runner] Job was killed with signal {}", signum);
+                    info!("[queue runner] Job was killed with signal {}", signum);
                     q.finish(
                         JobState::Killed(signum),
                         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -237,7 +233,7 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
                     )
                 } else {
                     let status = output.status.code().unwrap();
-                    println!("[queue runner] Job has terminated with code {}", status);
+                    info!("[queue runner] Job has terminated with code {}", status);
                     q.finish(
                         JobState::Terminated(status),
                         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -248,7 +244,7 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
             Err(e) => {
                 let mut q = q_mutex.lock().unwrap();
                 let message = e.description().to_string();
-                println!("[queue runner] Failed to launch job: {}", message);
+                error!("[queue runner] Failed to launch job: {}", message);
                 q.finish(
                     JobState::Failed(message),
                     String::from(""),
@@ -261,7 +257,7 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
             if j.notify_cmd.is_some() {
                 let id = j.id;
                 if let Err(e) = run_notify_command(j) {
-                    eprintln!(
+                    error!(
                         "Failed to run notify command for job {}: {}",
                         id,
                         e.description()
@@ -273,34 +269,28 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
 }
 
 pub fn handle(
-    tcp_port: Option<u16>,
-    pidfile: Option<&str>,
+    tcp_port: u16,
+    pidfile: Option<PathBuf>,
     cert: Option<Vec<u8>>,
     key: Option<Vec<u8>>,
     foreground: bool,
     dump_protocol: bool,
 ) -> Result<()> {
+
     if !foreground {
         daemonize(pidfile)?;
     }
 
-    /*
-    let listener = create_tcp_socket(tcp_port.unwrap_or(1337u16))?;
-
-    // set up TLS certificates if requested
-    let tls_acceptor: Option<TlsAcceptor> = if let Some(c) = cert {
-        Some(create_tls_acceptor(c)?)
-    } else {
-        None
-    };
-    */
-
-    let tcp_port = tcp_port.unwrap_or(1337u16);
-
     let httpd = match spawn_https(tcp_port, cert, key) {
         Ok(s) => s,
-        Err(e) => panic!("Could not set up listening socket on port {}: {}", tcp_port, e.description())
+        Err(e) => {
+            error!("Could not set up listening socket on port {}: {}", tcp_port, e.description());
+            panic!("Could not set up listening socket on port {}: {}", tcp_port, e.description())
+        }
     };
+
+    daemon::notify(false, [(daemon::STATE_READY, "1" )].iter())?;
+    info!("Daemon version {} ready.", crate_version!());
 
     let job_queue = Arc::new((Mutex::new(JobQueue::new()), Condvar::new()));
 
@@ -313,9 +303,8 @@ pub fn handle(
 
     // handle incoming TCP connections
     for request in httpd.incoming_requests() {
-        println!("Request: {:?}", request);
+        debug!("Request: {:?}", request);
 
-        //println!("Client {} connected.", stream.peer_addr().unwrap());
         handle_client(request, &job_queue.clone(), dump_protocol);
     }
 

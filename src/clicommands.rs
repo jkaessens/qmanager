@@ -15,7 +15,7 @@ fn print_jobs(header: &str, jobs: Vec<Job>) {
 pub fn handle_submit(client: &reqwest::Client,
                                 url: reqwest::Url,
                                 cmdline: &str,
-                                notifycmd: Option<&str>,
+                                notifycmd: Option<String>,
                                 dump_protocol: bool) -> Result<()> {
 
     let request_s = serde_json::to_string_pretty(&Request::SubmitJob(
@@ -44,11 +44,11 @@ pub fn handle_submit(client: &reqwest::Client,
 
 pub fn handle_remove(client: &reqwest::Client,
                                 url: reqwest::Url,
-                                jobid: &str,
+                                jobid: u64,
                                 dump_protocol: bool) -> Result<Job> {
 
     let request_s = serde_json::to_string_pretty(
-        &Request::RemoveJob(jobid.parse::<u64>().unwrap()))?;
+        &Request::RemoveJob(jobid))?;
     let mut response_req = client.post(url.clone()).body(request_s.clone()).send().unwrap();
     if dump_protocol {
         println!("Sent: {} ", request_s);
@@ -73,10 +73,10 @@ pub fn handle_remove(client: &reqwest::Client,
 
 pub fn handle_kill(client: &reqwest::Client,
                               url: reqwest::Url,
-                              jobid: &str,
+                              jobid: u64,
                               dump_protocol: bool) -> Result<()> {
     let request_s = serde_json::to_string_pretty(
-        &Request::KillJob(jobid.parse::<u64>().unwrap()))?;
+        &Request::KillJob(jobid))?;
 
     let mut response_req = client.post(url.clone()).body(request_s.clone()).send().unwrap();
     if dump_protocol {

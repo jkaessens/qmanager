@@ -77,7 +77,8 @@ impl JobQueue {
     }
 
     pub fn send_sigterm(&mut self, jobid: u64) -> Result<(), Error> {
-        eprintln!("[job queue] Trying to kill job {}", jobid);
+        debug!("[job queue] Trying to kill job {}", jobid);
+
         match self.queue.iter().find(|j| j.state == JobState::Running && j.id == jobid) {
             Some(job) => {
                 // It is okay to panic here, as failure to execute /bin/kill is a serious bug
@@ -91,16 +92,17 @@ impl JobQueue {
                     if code == 0 {
                         Ok(())
                     } else {
-                        eprintln!("Could not kill job. Exit code: {}", code);
+                        error!("Could not kill job. Exit code: {}", code);
                         Err(Error::from_raw_os_error(code))
                     }
                 } else {
-                    panic!("kill didn't leave an exit code");
+                    error!("kill didn't leave an exit code");
+                    Err(Error::from(ErrorKind::Other))
                 }
             },
 
             None => {
-                eprintln!("Could not find job");
+                warn!("Could not find job");
                 Err(Error::from(ErrorKind::InvalidInput))
             }
         }

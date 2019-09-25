@@ -1,0 +1,13 @@
+[Unit]
+Description=QManager Daemon
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/qmanager --insecure daemon --foreground
+ExecStop=/bin/kill $MAINPID
+User=http
+Group=http
+
+[Install]
+WantedBy=multi-user.target
+
