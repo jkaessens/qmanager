@@ -113,7 +113,7 @@ impl JobQueue {
     }
 
     pub fn finish(&mut self, new_state: JobState, stdout: String, stderr: String) -> Option<Job> {
-        if self.queue.len() > 0 {
+        if self.queue.is_empty() {
             let mut j = self.queue.remove(0);
 
             if j.state != JobState::Running {

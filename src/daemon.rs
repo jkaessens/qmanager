@@ -202,7 +202,7 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>, notify_url: Option<Strin
         */
         let mut cmditer = job.cmdline.split_ascii_whitespace();
         let appkey = cmditer.next().unwrap_or("");
-        let args :Vec<&str> = cmditer.into_iter().collect();
+        let args :Vec<&str> = cmditer.collect();
         let cmdline_remainder = args.join(" ");
         let mut actual_cmd = appkeys.get(appkey).cloned();
         if appkey.is_empty() || actual_cmd.is_none() {

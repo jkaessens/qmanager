@@ -100,41 +100,37 @@ pub enum OptCommand {
 }
 
 impl Opt {
-    pub fn merge_config(&mut self, conf: Config) -> () {
+    pub fn merge_config(&mut self, conf: Config) {
         // if --insecure is not present on the CL, check config for CA.
         // Certs and keys will be checked when destructuring the self.cmd.
         if !self.insecure {
             if self.ca.is_none() {
-                self.ca = conf.get_str("ca").ok().map(|s| PathBuf::from(s));
+                self.ca = conf.get_str("ca").ok().map(PathBuf::from);
             }
             self.insecure |= conf.get_bool("insecure").unwrap_or(false);
         }
-        self.port = if self.port == 0 { conf.get_int("port").unwrap_or(DEFAULT_PORT as i64) as u16 } else { self.port };
+        self.port = if self.port == 0 { conf.get_int("port").unwrap_or_else(|_| i64::from(DEFAULT_PORT)) as u16 } else { self.port };
 
         if self.host.is_empty() {
-            self.host = conf.get_str("host").unwrap_or(DEFAULT_HOST.to_string());
+            self.host = conf.get_str("host").unwrap_or_else(|_| DEFAULT_HOST.to_string());
         }
 
-        match &mut self.cmd {
-            OptCommand::Daemon { ref mut cert, ref mut key, ref mut pidfile, ref mut notify_url, ..} => {
+        if let OptCommand::Daemon { ref mut cert, ref mut key, ref mut pidfile, ref mut notify_url, ..} = &mut self.cmd {
+            if cert.is_none() {
+                *cert = conf.get_str("cert").ok().map( PathBuf::from);
+            }
 
-                if cert.is_none() {
-                    *cert = conf.get_str("cert").ok().map(|s| PathBuf::from(s));
-                }
+            if key.is_none() {
+                *key = conf.get_str("key").ok().map(PathBuf::from);
+            }
 
-                if key.is_none() {
-                    *key = conf.get_str("key").ok().map(|s| PathBuf::from(s));
-                }
+            if pidfile.is_none() {
+                *pidfile = conf.get_str("pidfile").ok().map(PathBuf::from);
+            }
 
-                if pidfile.is_none() {
-                    *pidfile = conf.get_str("pidfile").ok().map(|s| PathBuf::from(s));
-                }
-
-                if notify_url.is_none() {
-                    *notify_url = conf.get_str("notify-url").ok();
-                }
-            },
-            _ => {}
+            if notify_url.is_none() {
+                *notify_url = conf.get_str("notify-url").ok();
+            }
         }
 
         let appkeys = conf.get_table("appkeys").expect("Could not load appkeys from config file!");
@@ -143,7 +139,7 @@ impl Opt {
         }
 
         if self.loglevel.is_empty() {
-            self.loglevel = conf.get_str("loglevel").unwrap_or("Info".to_owned());
+            self.loglevel = conf.get_str("loglevel").unwrap_or_else(|_|"Info".to_owned());
         }
     }
 
