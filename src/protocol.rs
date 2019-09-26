@@ -8,7 +8,7 @@ impl<T: Read + Write> Stream for T {}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Request {
-    SubmitJob(String, Option<String>),
+    SubmitJob(String),
     RemoveJob(u64),
     KillJob(u64),
     GetQueuedJobs,

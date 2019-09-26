@@ -23,7 +23,6 @@ pub struct Job {
     pub stdout: String,
     pub state: JobState,
     pub pid: Option<u32>,
-    pub notify_cmd: Option<String>,
 }
 
 pub struct JobQueue {
@@ -49,7 +48,7 @@ impl JobQueue {
         self.finished.iter()
     }
 
-    pub fn submit(&mut self, cmdline: String, notify_cmd: Option<String>) -> u64 {
+    pub fn submit(&mut self, cmdline: String) -> u64 {
         let job = Job {
             id: self.last_id + 1,
             cmdline,
@@ -60,7 +59,6 @@ impl JobQueue {
             stdout: String::from(""),
             state: JobState::Queued,
             pid: None,
-            notify_cmd,
         };
 
         self.last_id += 1;

@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::io::{Result, Write};
+use std::io::Result;
 use std::net::{SocketAddr};
 use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, Stdio};
@@ -15,6 +15,8 @@ use serde_json;
 
 use job_queue::{Job, JobQueue, JobState};
 use protocol::{Request, Response};
+use std::collections::HashMap;
+use reqwest::Url;
 
 fn daemonize(pidfile: Option<PathBuf>) -> Result<()> {
     let uid = nix::unistd::Uid::current().as_raw();
@@ -31,7 +33,7 @@ fn daemonize(pidfile: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn spawn_https(tcp_port: u16, cert: Option<Vec<u8>>, key: Option<Vec<u8>>) -> std::result::Result<Server, Box<Error+Sync+Send>> {
+fn spawn_https(tcp_port: u16, cert: Option<Vec<u8>>, key: Option<Vec<u8>>) -> std::result::Result<Server, Box<dyn Error+Sync+Send>> {
     let bind_address = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], tcp_port));
 
     if cert.is_some() ^ key.is_some() {
@@ -113,9 +115,9 @@ fn handle_client(
             }
         }
 
-        Ok(Request::SubmitJob(cmdline, notify_email)) => {
+        Ok(Request::SubmitJob(cmdline)) => {
             let mut q = q_mutex.lock().unwrap();
-            let id = q.submit(cmdline, notify_email);
+            let id = q.submit(cmdline);
             cvar.notify_one();
             (200, serde_json::to_string_pretty(&Response::SubmitJob(id)).unwrap())
         }
@@ -154,28 +156,23 @@ fn handle_client(
     }
 }
 
-fn run_notify_command(job: Job) -> Result<()> {
-    let body = serde_json::to_string_pretty(&job).unwrap();
-    let notify_cmd = job.notify_cmd.unwrap();
-    match Command::new("sh")
-        .arg("-c")
-        .arg(&notify_cmd)
-        .stdin(Stdio::piped())
-        .spawn() {
-        Ok(mut child) => {
-            child.stdin.as_mut().unwrap().write_all(body.as_bytes())?;
-            child.wait()?;
-        },
-        Err(_) => {
-            error!("[queue runner] Failed to run notify command '{}'", notify_cmd);
-        }
-    };
-
-    Ok(())
+fn run_notify_command(job: Job, url: &Url) -> Result<()> {
+    let mut url = url.clone();
+    url.set_query(Some(&format!("jobid={}", job.id)));
+    let s = url.as_str().to_string();
+    if let Err(e) = reqwest::get(url) {
+        error!("Failed to call notify url {:#?}: {}", s, e.description());
+        Ok(())
+    } else {
+        debug!("Notification call to {:#?} succeeded.", s);
+        Ok(())
+    }
 }
 
-fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
+fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>, notify_url: Option<String>, appkeys: HashMap<String,PathBuf>) {
     let (ref q_mutex, ref cvar) = **q_mutex;
+
+    let notify_url = notify_url.map(|s| Url::parse(&s).unwrap());
 
     loop {
         let mut job: Option<Job> = None;
@@ -203,7 +200,17 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
         spawner would yield the PID of 'sh'. exec replaces the shell with
         the acutal process that we would like to run, keeping the pid.
         */
-        let cmdline_wrapper = format!("exec {}", job.cmdline);
+        let mut cmditer = job.cmdline.split_ascii_whitespace();
+        let appkey = cmditer.next().unwrap_or("");
+        let args :Vec<&str> = cmditer.into_iter().collect();
+        let cmdline_remainder = args.join(" ");
+        let mut actual_cmd = appkeys.get(appkey).cloned();
+        if appkey.is_empty() || actual_cmd.is_none() {
+            error!("Invalid appkey");
+            actual_cmd = Some(PathBuf::from("invalid-appkey"));
+        }
+        let actual_cmd = actual_cmd.unwrap();
+        let cmdline_wrapper = format!("exec {} {}", actual_cmd.to_str().unwrap(), cmdline_remainder);
 
         let cmd = Command::new("sh")
             .arg("-c")
@@ -254,9 +261,9 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>) {
         };
 
         if let Some(j) = job {
-            if j.notify_cmd.is_some() {
+            if notify_url.is_some() {
                 let id = j.id;
-                if let Err(e) = run_notify_command(j) {
+                if let Err(e) = run_notify_command(j, notify_url.as_ref().unwrap()) {
                     error!(
                         "Failed to run notify command for job {}: {}",
                         id,
@@ -275,6 +282,8 @@ pub fn handle(
     key: Option<Vec<u8>>,
     foreground: bool,
     dump_protocol: bool,
+    appkeys: HashMap<String,PathBuf>,
+    notify_url: Option<String>,
 ) -> Result<()> {
 
     if !foreground {
@@ -291,6 +300,7 @@ pub fn handle(
 
     daemon::notify(false, [(daemon::STATE_READY, "1" )].iter())?;
     info!("Daemon version {} ready.", crate_version!());
+    info!("Application keys available: {:?}", appkeys.keys());
 
     let job_queue = Arc::new((Mutex::new(JobQueue::new()), Condvar::new()));
 
@@ -299,7 +309,7 @@ pub fn handle(
     let queue_runner_q = job_queue.clone();
     let queue_runner = thread::Builder::new()
         .name("Queue Runner".to_owned())
-        .spawn(move || run_queue(&queue_runner_q));
+        .spawn(move || run_queue(&queue_runner_q, notify_url, appkeys));
 
     // handle incoming TCP connections
     for request in httpd.incoming_requests() {

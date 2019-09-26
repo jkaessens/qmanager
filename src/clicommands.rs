@@ -15,12 +15,10 @@ fn print_jobs(header: &str, jobs: Vec<Job>) {
 pub fn handle_submit(client: &reqwest::Client,
                                 url: reqwest::Url,
                                 cmdline: &str,
-                                notifycmd: Option<String>,
                                 dump_protocol: bool) -> Result<()> {
 
     let request_s = serde_json::to_string_pretty(&Request::SubmitJob(
-        cmdline.to_string(),
-        notifycmd.map(|s| s.to_string())))?;
+        cmdline.to_string()))?;
 
     let mut response_req = client.post(url.clone()).body(request_s.clone()).send().unwrap();
     if dump_protocol {
