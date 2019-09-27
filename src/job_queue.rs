@@ -113,9 +113,9 @@ impl JobQueue {
     }
 
     pub fn finish(&mut self, new_state: JobState, stdout: String, stderr: String) -> Option<Job> {
-        if self.queue.is_empty() {
+        if !self.queue.is_empty() {
             let mut j = self.queue.remove(0);
-
+            debug!("Queue finish: job {} old state {:?} new state {:?}", j.id, j.state, new_state);
             if j.state != JobState::Running {
                 panic!("Trying to finish a job that is not running: {:?}", j);
             }
@@ -127,6 +127,7 @@ impl JobQueue {
             self.finished.push(j.clone());
             Some(j)
         } else {
+            error!("Queue finish: no job?");
             None
         }
     }
