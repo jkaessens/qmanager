@@ -160,12 +160,20 @@ fn run_notify_command(job: Job, url: &Url) -> Result<()> {
     let mut url = url.clone();
     url.set_query(Some(&format!("jobid={}", job.id)));
     let s = url.as_str().to_string();
-    if let Err(e) = reqwest::get(url) {
-        error!("Failed to call notify url {:#?}: {}", s, e.description());
-        Ok(())
-    } else {
-        debug!("Notification call to {:#?} succeeded.", s);
-        Ok(())
+
+    match reqwest::get(url) {
+        Err(e) => {
+            error!("Failed to call notify url {:#?}: {}", s, e.description());
+            Ok(())
+        },
+        Ok(ref r) if r.status().is_success() => {
+            debug!("Notification call to {:#?} succeeded. Response: {}", s, r.status().as_str());
+            Ok(())
+        },
+        Ok(r) => {
+            debug!("Notification call to {:#?} failed. Response: {}", s, r.status().as_str());
+            Ok(())
+        }
     }
 }
 
