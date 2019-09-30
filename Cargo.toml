@@ -1,6 +1,6 @@
 [package]
 name = "qmanager"
-version = "0.7.2"
+version = "0.7.3"
 authors = ["Jan Christian Kaessens <j.kaessens@ikmb.uni-kiel.de>"]
 
 [dependencies]

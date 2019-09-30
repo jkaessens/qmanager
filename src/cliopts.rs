@@ -115,6 +115,10 @@ impl Opt {
             self.host = conf.get_str("host").unwrap_or_else(|_| DEFAULT_HOST.to_string());
         }
 
+        if !self.dump_json {
+            self.dump_json = conf.get_bool("dump-json").unwrap_or(false);
+        }
+
         if let OptCommand::Daemon { ref mut cert, ref mut key, ref mut pidfile, ref mut notify_url, ..} = &mut self.cmd {
             if cert.is_none() {
                 *cert = conf.get_str("cert").ok().map( PathBuf::from);
