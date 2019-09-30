@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 pub const DEFAULT_PORT :u16 = 1337;
 pub const DEFAULT_HOST :&str = "localhost";
+pub const DEFAULT_STATE :&str = "/var/lib/qmanager/qmanager.state";
 
 #[derive(Debug, StructOpt)]
 #[structopt(name=crate_name!(), version=crate_version!(), author=crate_authors!(), about=crate_description!())]
@@ -45,7 +46,10 @@ pub struct Opt {
     pub appkeys: HashMap<String,PathBuf>,
 
     #[structopt(subcommand)]
-    pub cmd: OptCommand
+    pub cmd: OptCommand,
+
+    #[structopt(long,parse(from_os_str))]
+    pub state_file: Option<PathBuf>
 }
 
 #[derive(Debug,StructOpt)]
@@ -117,6 +121,10 @@ impl Opt {
 
         if !self.dump_json {
             self.dump_json = conf.get_bool("dump-json").unwrap_or(false);
+        }
+
+        if self.state_file.is_none() {
+            self.state_file = Some(PathBuf::from(conf.get_str("state-file").unwrap_or(DEFAULT_STATE.to_string())));
         }
 
         if let OptCommand::Daemon { ref mut cert, ref mut key, ref mut pidfile, ref mut notify_url, ..} = &mut self.cmd {

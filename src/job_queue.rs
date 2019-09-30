@@ -32,9 +32,9 @@ pub struct JobQueue {
 }
 
 impl JobQueue {
-    pub fn new() -> Self {
+    pub fn new(last_id: u64) -> Self {
         JobQueue {
-            last_id: 0,
+            last_id,
             queue: Vec::new(),
             finished: Vec::new(),
         }

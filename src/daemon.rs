@@ -15,6 +15,7 @@ use serde_json;
 
 use job_queue::{Job, JobQueue, JobState};
 use protocol::{Request, Response};
+use state::State;
 use std::collections::HashMap;
 use reqwest::Url;
 
@@ -59,6 +60,7 @@ fn handle_client(
     mut httprequest: tiny_http::Request,
     q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>,
     dump_protocol: bool,
+    state: &mut State,
 ) {
     let (ref q_mutex, ref cvar) = **q_mutex;
 
@@ -118,6 +120,8 @@ fn handle_client(
         Ok(Request::SubmitJob(cmdline)) => {
             let mut q = q_mutex.lock().unwrap();
             let id = q.submit(cmdline);
+            state.last_id = id;
+            let _ = state.save();
             cvar.notify_one();
             (200, serde_json::to_string_pretty(&Response::SubmitJob(id)).unwrap())
         }
@@ -292,6 +296,7 @@ pub fn handle(
     dump_protocol: bool,
     appkeys: HashMap<String,PathBuf>,
     notify_url: Option<String>,
+    state: &mut State,
 ) -> Result<()> {
 
     if !foreground {
@@ -310,7 +315,7 @@ pub fn handle(
     info!("Daemon version {} ready.", crate_version!());
     info!("Application keys available: {:?}", appkeys.keys());
 
-    let job_queue = Arc::new((Mutex::new(JobQueue::new()), Condvar::new()));
+    let job_queue = Arc::new((Mutex::new(JobQueue::new(state.last_id)), Condvar::new()));
 
     // set up queue runner
 
@@ -323,7 +328,7 @@ pub fn handle(
     for request in httpd.incoming_requests() {
         debug!("Request: {:?}", request);
 
-        handle_client(request, &job_queue.clone(), dump_protocol);
+        handle_client(request, &job_queue.clone(), dump_protocol, state);
     }
 
     queue_runner.unwrap().join().unwrap();

@@ -20,6 +20,7 @@ mod cliopts;
 mod daemon;
 mod job_queue;
 mod protocol;
+mod state;
 
 use std::fs::File;
 use std::io::prelude::*;
@@ -28,6 +29,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use cliopts::*;
+use state::State;
 
 use syslog::{Facility};
 use structopt::StructOpt;
@@ -71,7 +73,6 @@ fn main() -> Result<()> {
     config.merge(config::File::new(opt.config.to_str().unwrap(), config::FileFormat::Toml)).expect("Failed to read configuration file!");
     opt.merge_config(config);
 
-
     if let OptCommand::Daemon {..} = &opt.cmd {
         syslog::init(Facility::LOG_DAEMON,
                          log::LevelFilter::from_str(&opt.loglevel).expect("Failed to parse log level!"),
@@ -86,6 +87,8 @@ fn main() -> Result<()> {
 
     opt.verify()?;
 
+    let mut state = State::from(opt.state_file.unwrap());
+
     // Handle subcommands
     match opt.cmd {
         OptCommand::Daemon {cert, key, pidfile, foreground,notify_url}=> {
@@ -93,7 +96,7 @@ fn main() -> Result<()> {
             let cert = cert.and_then(|s| Some(slurp_file(&s))).transpose()?;
             let key = key.and_then(|s| Some(slurp_file(&s))).transpose()?;
 
-            daemon::handle(opt.port, pidfile, cert, key, foreground, opt.dump_json, opt.appkeys, notify_url)
+            daemon::handle(opt.port, pidfile, cert, key, foreground, opt.dump_json, opt.appkeys, notify_url, &mut state)
         },
 
         OptCommand::QueueStatus {} => {
