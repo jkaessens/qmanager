@@ -3,3 +3,5 @@
 ssl
 Cargo.lock
 easyrsa
+.idea
+qmanager.iml
