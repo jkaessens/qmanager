@@ -1,20 +1,19 @@
-
+use std::io::{ErrorKind, Result};
 use std::path::PathBuf;
-use std::io::{Result, ErrorKind};
 
-use structopt::StructOpt;
 use config::Config;
 use std::collections::HashMap;
+use structopt::StructOpt;
 
-pub const DEFAULT_PORT :u16 = 1337;
-pub const DEFAULT_HOST :&str = "localhost";
-pub const DEFAULT_STATE :&str = "/var/lib/qmanager/qmanager.state";
+pub const DEFAULT_PORT: u16 = 1337;
+pub const DEFAULT_HOST: &str = "localhost";
+pub const DEFAULT_STATE: &str = "/var/lib/qmanager/qmanager.state";
 
 #[derive(Debug, StructOpt)]
 #[structopt(name=crate_name!(), version=crate_version!(), author=crate_authors!(), about=crate_description!())]
 pub struct Opt {
     /// Set CA certificate
-    #[structopt(long,parse(from_os_str))]
+    #[structopt(long, parse(from_os_str))]
     pub ca: Option<PathBuf>,
 
     /// Use plain TCP instead of SSL/TLS
@@ -22,37 +21,37 @@ pub struct Opt {
     pub insecure: bool,
 
     /// For clients, the host name to connect to. For servers ignored (default: localhost)
-    #[structopt(long,default_value="")]
+    #[structopt(long, default_value = "")]
     pub host: String,
 
     /// For clients, the port to connect to. For servers, the port to listen on (default: 1337)
-    #[structopt(long,default_value="0")]
+    #[structopt(long, default_value = "0")]
     pub port: u16,
 
     #[structopt(long)]
     /// Dump client requests and responses to stdout
     pub dump_json: bool,
 
-    #[structopt(long,default_value="")]
+    #[structopt(long, default_value = "")]
     /// The log level (default: Info, possible: Error, Warn, Info, Debug)
     pub loglevel: String,
 
-    #[structopt(long,parse(from_os_str),default_value="/etc/qmanager.conf")]
+    #[structopt(long, parse(from_os_str), default_value = "/etc/qmanager.conf")]
     /// Path to configuration file
     pub config: PathBuf,
 
     #[structopt(skip)]
     /// Application keys
-    pub appkeys: HashMap<String,PathBuf>,
+    pub appkeys: HashMap<String, PathBuf>,
 
     #[structopt(subcommand)]
     pub cmd: OptCommand,
 
-    #[structopt(long,parse(from_os_str))]
-    pub state_file: Option<PathBuf>
+    #[structopt(long, parse(from_os_str))]
+    pub state_file: Option<PathBuf>,
 }
 
-#[derive(Debug,StructOpt)]
+#[derive(Debug, StructOpt)]
 pub enum OptCommand {
     /// Starts the qmanager daemon
     Daemon {
@@ -61,31 +60,35 @@ pub enum OptCommand {
         foreground: bool,
 
         /// Certificate file for SSL/TLS operation
-        #[structopt(long,parse(from_os_str))]
+        #[structopt(long, parse(from_os_str))]
         cert: Option<PathBuf>,
 
         /// Key for SSL/TLS certificate
-        #[structopt(long,parse(from_os_str))]
+        #[structopt(long, parse(from_os_str))]
         key: Option<PathBuf>,
 
         /// PID file location
-        #[structopt(long,parse(from_os_str))]
+        #[structopt(long, parse(from_os_str))]
         pidfile: Option<PathBuf>,
 
         /// Notify URL
         #[structopt(long)]
-        notify_url: Option<String>
+        notify_url: Option<String>,
     },
 
-    /// Requests the queue status
-    QueueStatus {
+    /// Requests the queue to be stopped
+    Stop {},
 
-    },
+    /// Requests queue operations to be resumed
+    Start {},
+
+    /// Requests queue status
+    Status {},
 
     /// Submits a job to the queue
     Submit {
         #[structopt(name = "CMDLINE", parse(from_str))]
-        cmdline: String
+        cmdline: String,
     },
 
     /// Removes a finished job from the queue
@@ -100,7 +103,7 @@ pub enum OptCommand {
         /// Job ID to terminate
         #[structopt(long)]
         job_id: u64,
-    }
+    },
 }
 
 impl Opt {
@@ -113,10 +116,17 @@ impl Opt {
             }
             self.insecure |= conf.get_bool("insecure").unwrap_or(false);
         }
-        self.port = if self.port == 0 { conf.get_int("port").unwrap_or_else(|_| i64::from(DEFAULT_PORT)) as u16 } else { self.port };
+        self.port = if self.port == 0 {
+            conf.get_int("port")
+                .unwrap_or_else(|_| i64::from(DEFAULT_PORT)) as u16
+        } else {
+            self.port
+        };
 
         if self.host.is_empty() {
-            self.host = conf.get_str("host").unwrap_or_else(|_| DEFAULT_HOST.to_string());
+            self.host = conf
+                .get_str("host")
+                .unwrap_or_else(|_| DEFAULT_HOST.to_string());
         }
 
         if !self.dump_json {
@@ -124,12 +134,22 @@ impl Opt {
         }
 
         if self.state_file.is_none() {
-            self.state_file = Some(PathBuf::from(conf.get_str("state-file").unwrap_or(DEFAULT_STATE.to_string())));
+            self.state_file = Some(PathBuf::from(
+                conf.get_str("state-file")
+                    .unwrap_or(DEFAULT_STATE.to_string()),
+            ));
         }
 
-        if let OptCommand::Daemon { ref mut cert, ref mut key, ref mut pidfile, ref mut notify_url, ..} = &mut self.cmd {
+        if let OptCommand::Daemon {
+            ref mut cert,
+            ref mut key,
+            ref mut pidfile,
+            ref mut notify_url,
+            ..
+        } = &mut self.cmd
+        {
             if cert.is_none() {
-                *cert = conf.get_str("cert").ok().map( PathBuf::from);
+                *cert = conf.get_str("cert").ok().map(PathBuf::from);
             }
 
             if key.is_none() {
@@ -145,13 +165,17 @@ impl Opt {
             }
         }
 
-        let appkeys = conf.get_table("appkeys").expect("Could not load appkeys from config file!");
+        let appkeys = conf
+            .get_table("appkeys")
+            .expect("Could not load appkeys from config file!");
         for (k, v) in appkeys {
             self.appkeys.insert(k, PathBuf::from(v.into_str().unwrap()));
         }
 
         if self.loglevel.is_empty() {
-            self.loglevel = conf.get_str("loglevel").unwrap_or_else(|_|"Info".to_owned());
+            self.loglevel = conf
+                .get_str("loglevel")
+                .unwrap_or_else(|_| "Info".to_owned());
         }
     }
 
@@ -162,9 +186,11 @@ impl Opt {
                 eprintln!("You cannot specify both --insecure and --ca!");
                 return Err(std::io::Error::from(ErrorKind::InvalidInput));
             }
-            if let OptCommand::Daemon {cert, key, ..} = &self.cmd {
+            if let OptCommand::Daemon { cert, key, .. } = &self.cmd {
                 if cert.is_some() || key.is_some() {
-                    eprintln!("You cannot specify --insecure in combination with --cert and --key!");
+                    eprintln!(
+                        "You cannot specify --insecure in combination with --cert and --key!"
+                    );
                     return Err(std::io::Error::from(ErrorKind::InvalidInput));
                 }
             }
@@ -173,9 +199,11 @@ impl Opt {
                 eprintln!("You need to specify either --ca or --insecure!");
                 return Err(std::io::Error::from(ErrorKind::InvalidInput));
             }
-            if let OptCommand::Daemon {cert, key, ..} = &self.cmd {
+            if let OptCommand::Daemon { cert, key, .. } = &self.cmd {
                 if cert.is_none() || key.is_none() {
-                    eprintln!("You cannot use daemon mode without specifying both --cert and --key!");
+                    eprintln!(
+                        "You cannot use daemon mode without specifying both --cert and --key!"
+                    );
                     return Err(std::io::Error::from(ErrorKind::InvalidInput));
                 }
             }

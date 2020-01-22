@@ -1,7 +1,6 @@
 use std::io::prelude::*;
 
-use job_queue::Job;
-
+use job_queue::{Job,QueueState};
 
 pub trait Stream: Read + Write {}
 impl<T: Read + Write> Stream for T {}
@@ -13,6 +12,8 @@ pub enum Request {
     KillJob(u64),
     GetQueuedJobs,
     GetFinishedJobs,
+    SetQueueState(QueueState),
+    GetQueueState,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -21,5 +22,6 @@ pub enum Response {
     GetJobs(Vec<Job>),
     GetJob(Job),
     Error(String),
+    QueueState(QueueState),
     Ok,
 }

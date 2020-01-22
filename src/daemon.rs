@@ -1,23 +1,23 @@
 use std::error::Error;
 use std::io::Result;
-use std::net::{SocketAddr};
+use std::net::SocketAddr;
 use std::os::unix::process::ExitStatusExt;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::path::PathBuf;
 
 use daemonize::Daemonize;
-use tiny_http::{Server, SslConfig};
 use systemd::daemon;
+use tiny_http::{Server, SslConfig};
 
 use serde_json;
 
 use job_queue::{Job, JobQueue, JobState};
 use protocol::{Request, Response};
+use reqwest::Url;
 use state::State;
 use std::collections::HashMap;
-use reqwest::Url;
 
 fn daemonize(pidfile: Option<PathBuf>) -> Result<()> {
     let uid = nix::unistd::Uid::current().as_raw();
@@ -25,16 +25,17 @@ fn daemonize(pidfile: Option<PathBuf>) -> Result<()> {
 
     let pidfile = pidfile.unwrap_or(pidfile_default);
 
-    if let Err(e) = Daemonize::new()
-        .pid_file(pidfile)
-        .start()
-    {
+    if let Err(e) = Daemonize::new().pid_file(pidfile).start() {
         eprintln!("Failed to daemonize: {}", e);
     }
     Ok(())
 }
 
-fn spawn_https(tcp_port: u16, cert: Option<Vec<u8>>, key: Option<Vec<u8>>) -> std::result::Result<Server, Box<dyn Error+Sync+Send>> {
+fn spawn_https(
+    tcp_port: u16,
+    cert: Option<Vec<u8>>,
+    key: Option<Vec<u8>>,
+) -> std::result::Result<Server, Box<dyn Error + Sync + Send>> {
     let bind_address = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], tcp_port));
 
     if cert.is_some() ^ key.is_some() {
@@ -45,16 +46,13 @@ fn spawn_https(tcp_port: u16, cert: Option<Vec<u8>>, key: Option<Vec<u8>>) -> st
         Some(c) => {
             let ssl_config = SslConfig {
                 certificate: c,
-                private_key: key.unwrap()
+                private_key: key.unwrap(),
             };
             Server::https(bind_address, ssl_config)
         }
-        None => {
-            Server::http(bind_address)
-        }
+        None => Server::http(bind_address),
     }
 }
-
 
 fn handle_client(
     mut httprequest: tiny_http::Request,
@@ -63,7 +61,6 @@ fn handle_client(
     state: &mut State,
 ) {
     let (ref q_mutex, ref cvar) = **q_mutex;
-
 
     let mut s = String::from("");
     httprequest.as_reader().read_to_string(&mut s).unwrap();
@@ -75,55 +72,84 @@ fn handle_client(
 
     debug!("[handle_client] Processing request: {:?}", request);
 
-
     let (status_code, response_s) = match request {
         Ok(Request::GetQueuedJobs) => {
             let q = q_mutex.lock().unwrap();
             let items = q.iter_queued().cloned().collect();
-            (200, serde_json::to_string_pretty(&Response::GetJobs(items)).unwrap())
+            (
+                200,
+                serde_json::to_string_pretty(&Response::GetJobs(items)).unwrap(),
+            )
+        }
+
+        Ok(Request::GetQueueState) => {
+            let q = q_mutex.lock().unwrap();
+            let state = q.get_state();
+            (
+                200,
+                serde_json::to_string_pretty(&Response::QueueState(state)).unwrap(),
+            )
+        }
+
+        Ok(Request::SetQueueState(new_state)) => {
+            let mut q = q_mutex.lock().unwrap();
+            q.set_state(new_state);
+            cvar.notify_one();
+
+            state.save(&q).expect("Could not write program state");
+            (
+                200,
+                serde_json::to_string_pretty(&Response::QueueState(new_state)).unwrap(),
+            )
         }
 
         Ok(Request::GetFinishedJobs) => {
             let q = q_mutex.lock().unwrap();
             let items = q.iter_finished().cloned().collect();
-            (200, serde_json::to_string_pretty(&Response::GetJobs(items)).unwrap())
+            (
+                200,
+                serde_json::to_string_pretty(&Response::GetJobs(items)).unwrap(),
+            )
         }
 
         Ok(Request::RemoveJob(id)) => {
             let mut q = q_mutex.lock().unwrap();
-            match q.remove(id) {
-                Ok(job) => {
-                    (200, serde_json::to_string_pretty(&Response::GetJob(job)).unwrap())
-                }
-                _ => {
-                    (422, serde_json::to_string_pretty(&Response::Error(
-                            "No such job".to_string(),
-                        )).unwrap())
-                }
+            let s = q.remove(id);
+            state.save(&q);
+            match s {
+                Ok(job) => (
+                    200,
+                    serde_json::to_string_pretty(&Response::GetJob(job)).unwrap(),
+                ),
+                _ => (
+                    422,
+                    serde_json::to_string_pretty(&Response::Error("No such job".to_string()))
+                        .unwrap(),
+                ),
             }
         }
 
         Ok(Request::KillJob(id)) => {
             let mut q = q_mutex.lock().unwrap();
             match q.send_sigterm(id) {
-                Ok(_) => {
-                    (200, serde_json::to_string_pretty(&Response::Ok).unwrap())
-                }
-                _ => {
-                    (422, serde_json::to_string_pretty(&Response::Error(
-                            "No such job".to_string(),
-                        )).unwrap())
-                }
+                Ok(_) => (200, serde_json::to_string_pretty(&Response::Ok).unwrap()),
+                _ => (
+                    422,
+                    serde_json::to_string_pretty(&Response::Error("No such job".to_string()))
+                        .unwrap(),
+                ),
             }
         }
 
         Ok(Request::SubmitJob(cmdline)) => {
             let mut q = q_mutex.lock().unwrap();
             let id = q.submit(cmdline);
-            state.last_id = id;
-            let _ = state.save();
+            state.save(&q).expect("Could not write program state");
             cvar.notify_one();
-            (200, serde_json::to_string_pretty(&Response::SubmitJob(id)).unwrap())
+            (
+                200,
+                serde_json::to_string_pretty(&Response::SubmitJob(id)).unwrap(),
+            )
         }
 
         Err(e) => {
@@ -136,23 +162,27 @@ fn handle_client(
     };
 
     if dump_protocol {
-        debug!("[handle_client] Returning {} response: {}", status_code, &response_s);
+        debug!(
+            "[handle_client] Returning {} response: {}",
+            status_code, &response_s
+        );
     } else if status_code != 200 {
-        info!("[handle_client] Sending errorneous status code {} with response: {}", status_code, &response_s);
+        info!(
+            "[handle_client] Sending errorneous status code {} with response: {}",
+            status_code, &response_s
+        );
     }
 
-    let mut response =
-        tiny_http::Response::from_string(response_s)
-            .with_status_code(status_code);
+    let mut response = tiny_http::Response::from_string(response_s).with_status_code(status_code);
 
     if status_code == 200 {
-        response.add_header(tiny_http::Header::from_bytes(
-            &b"Content-Type"[..], &b"application/json"[..]
-        ).unwrap());
+        response.add_header(
+            tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
+        );
     } else {
-        response.add_header(tiny_http::Header::from_bytes(
-            &b"Content-Type"[..], &b"text/plain"[..]
-        ).unwrap());
+        response.add_header(
+            tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/plain"[..]).unwrap(),
+        );
     }
 
     if let Err(err) = httprequest.respond(response) {
@@ -169,19 +199,31 @@ fn run_notify_command(job: Job, url: &Url) -> Result<()> {
         Err(e) => {
             error!("Failed to call notify url {:#?}: {}", s, e.description());
             Ok(())
-        },
+        }
         Ok(ref r) if r.status().is_success() => {
-            debug!("Notification call to {:#?} succeeded. Response: {}", s, r.status().as_str());
+            debug!(
+                "Notification call to {:#?} succeeded. Response: {}",
+                s,
+                r.status().as_str()
+            );
             Ok(())
-        },
+        }
         Ok(r) => {
-            debug!("Notification call to {:#?} failed. Response: {}", s, r.status().as_str());
+            debug!(
+                "Notification call to {:#?} failed. Response: {}",
+                s,
+                r.status().as_str()
+            );
             Ok(())
         }
     }
 }
 
-fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>, notify_url: Option<String>, appkeys: HashMap<String,PathBuf>) {
+fn run_queue(
+    q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>,
+    notify_url: Option<String>,
+    appkeys: HashMap<String, PathBuf>,
+) {
     let (ref q_mutex, ref cvar) = **q_mutex;
 
     let notify_url = notify_url.map(|s| Url::parse(&s).unwrap());
@@ -214,7 +256,7 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>, notify_url: Option<Strin
         */
         let mut cmditer = job.cmdline.split_ascii_whitespace();
         let appkey = cmditer.next().unwrap_or("");
-        let args :Vec<&str> = cmditer.collect();
+        let args: Vec<&str> = cmditer.collect();
         let cmdline_remainder = args.join(" ");
         let mut actual_cmd = appkeys.get(appkey).cloned();
         if appkey.is_empty() || actual_cmd.is_none() {
@@ -222,7 +264,11 @@ fn run_queue(q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>, notify_url: Option<Strin
             actual_cmd = Some(PathBuf::from("invalid-appkey"));
         }
         let actual_cmd = actual_cmd.unwrap();
-        let cmdline_wrapper = format!("exec {} {}", actual_cmd.to_str().unwrap(), cmdline_remainder);
+        let cmdline_wrapper = format!(
+            "exec {} {}",
+            actual_cmd.to_str().unwrap(),
+            cmdline_remainder
+        );
 
         let cmd = Command::new("sh")
             .arg("-c")
@@ -294,11 +340,10 @@ pub fn handle(
     key: Option<Vec<u8>>,
     foreground: bool,
     dump_protocol: bool,
-    appkeys: HashMap<String,PathBuf>,
+    appkeys: HashMap<String, PathBuf>,
     notify_url: Option<String>,
     state: &mut State,
 ) -> Result<()> {
-
     if !foreground {
         daemonize(pidfile)?;
     }
@@ -306,16 +351,24 @@ pub fn handle(
     let httpd = match spawn_https(tcp_port, cert, key) {
         Ok(s) => s,
         Err(e) => {
-            error!("Could not set up listening socket on port {}: {}", tcp_port, e.description());
-            panic!("Could not set up listening socket on port {}: {}", tcp_port, e.description())
+            error!(
+                "Could not set up listening socket on port {}: {}",
+                tcp_port,
+                e.description()
+            );
+            panic!(
+                "Could not set up listening socket on port {}: {}",
+                tcp_port,
+                e.description()
+            )
         }
     };
 
-    daemon::notify(false, [(daemon::STATE_READY, "1" )].iter())?;
+    daemon::notify(false, [(daemon::STATE_READY, "1")].iter())?;
     info!("Daemon version {} ready.", crate_version!());
     info!("Application keys available: {:?}", appkeys.keys());
 
-    let job_queue = Arc::new((Mutex::new(JobQueue::new(state.last_id)), Condvar::new()));
+    let job_queue = Arc::new((Mutex::new(state.load_queue()), Condvar::new()));
 
     // set up queue runner
 

@@ -1,7 +1,6 @@
-use std::time::SystemTime;
+use std::io::{Error, ErrorKind};
 use std::process::Command;
-use std::io::{Error,ErrorKind};
-
+use std::time::SystemTime;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum JobState {
@@ -10,6 +9,13 @@ pub enum JobState {
     Terminated(i32),
     Killed(i32),
     Failed(String),
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy)]
+pub enum QueueState {
+    Running,
+    Stopping,
+    Stopped,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -25,8 +31,10 @@ pub struct Job {
     pub pid: Option<u32>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct JobQueue {
     last_id: u64,
+    state: QueueState,
     queue: Vec<Job>,
     finished: Vec<Job>,
 }
@@ -35,6 +43,7 @@ impl JobQueue {
     pub fn new(last_id: u64) -> Self {
         JobQueue {
             last_id,
+            state: QueueState::Running,
             queue: Vec::new(),
             finished: Vec::new(),
         }
@@ -46,6 +55,14 @@ impl JobQueue {
 
     pub fn iter_finished(&self) -> impl Iterator<Item = &Job> {
         self.finished.iter()
+    }
+
+    pub fn get_state(&self) -> QueueState {
+        self.state
+    }
+
+    pub fn set_state(&mut self, new_state: QueueState) {
+        self.state = new_state;
     }
 
     pub fn submit(&mut self, cmdline: String) -> u64 {
@@ -67,17 +84,25 @@ impl JobQueue {
     }
 
     pub fn schedule(&mut self) -> Option<Job> {
-        self.queue.first_mut().map(|j| {
-            j.started = Some(SystemTime::now());
-            j.state = JobState::Running;
-            j.clone()
-        })
+        if self.state == QueueState::Running {
+            self.queue.first_mut().map(|j| {
+                j.started = Some(SystemTime::now());
+                j.state = JobState::Running;
+                j.clone()
+            })
+        } else {
+            None
+        }
     }
 
     pub fn send_sigterm(&mut self, jobid: u64) -> Result<(), Error> {
         debug!("[job queue] Trying to kill job {}", jobid);
 
-        match self.queue.iter().find(|j| j.state == JobState::Running && j.id == jobid) {
+        match self
+            .queue
+            .iter()
+            .find(|j| j.state == JobState::Running && j.id == jobid)
+        {
             Some(job) => {
                 // It is okay to panic here, as failure to execute /bin/kill is a serious bug
                 let status = Command::new("/bin/kill")
@@ -97,7 +122,7 @@ impl JobQueue {
                     error!("kill didn't leave an exit code");
                     Err(Error::from(ErrorKind::Other))
                 }
-            },
+            }
 
             None => {
                 warn!("Could not find job");
@@ -107,7 +132,11 @@ impl JobQueue {
     }
 
     pub fn assign_pid(&mut self, jobid: u64, pid: u32) {
-        if let Some(ref mut job) = self.queue.iter_mut().find(|job| job.state == JobState::Running && job.id == jobid) {
+        if let Some(ref mut job) = self
+            .queue
+            .iter_mut()
+            .find(|job| job.state == JobState::Running && job.id == jobid)
+        {
             job.pid = Some(pid);
         }
     }
@@ -115,7 +144,10 @@ impl JobQueue {
     pub fn finish(&mut self, new_state: JobState, stdout: String, stderr: String) -> Option<Job> {
         if !self.queue.is_empty() {
             let mut j = self.queue.remove(0);
-            debug!("Queue finish: job {} old state {:?} new state {:?}", j.id, j.state, new_state);
+            debug!(
+                "Queue finish: job {} old state {:?} new state {:?}",
+                j.id, j.state, new_state
+            );
             if j.state != JobState::Running {
                 panic!("Trying to finish a job that is not running: {:?}", j);
             }
@@ -125,6 +157,9 @@ impl JobQueue {
             j.stdout = stdout;
             j.stderr = stderr;
             self.finished.push(j.clone());
+            if self.state == QueueState::Stopping {
+                self.state = QueueState::Stopped;
+            }
             Some(j)
         } else {
             error!("Queue finish: no job?");
@@ -133,7 +168,7 @@ impl JobQueue {
     }
 
     pub fn remove(&mut self, id: u64) -> Result<Job, ()> {
-        let mut item_index :Option<usize> = None;
+        let mut item_index: Option<usize> = None;
 
         // scan finished jobs
         for (current, job) in self.finished.iter().enumerate() {
@@ -146,7 +181,6 @@ impl JobQueue {
         if let Some(index) = item_index {
             return Ok(self.finished.remove(index));
         }
-
 
         // scan queued jobs (that are not running)
         for (current, job) in self.queue.iter().enumerate() {
