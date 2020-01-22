@@ -13,7 +13,7 @@ use tiny_http::{Server, SslConfig};
 
 use serde_json;
 
-use job_queue::{Job, JobQueue, JobState};
+use job_queue::{Job, JobQueue, JobState, QueueState};
 use protocol::{Request, Response};
 use reqwest::Url;
 use state::State;
@@ -370,6 +370,18 @@ pub fn handle(
 
     let job_queue = Arc::new((Mutex::new(state.load_queue()), Condvar::new()));
 
+    // Reset first job to a defined state if the daemon has been interrupted
+    {
+        let (ref q_mutex, _) = *job_queue;
+        let mut q = q_mutex.lock().unwrap();
+        match q.get_state() {
+            QueueState::Stopped => {}
+            QueueState::Stopping => q.reset_first_job(JobState::Queued),
+            QueueState::Running => q.reset_first_job(JobState::Failed(
+                "Interrupted by system failure, please re-submit or ask for assistence".to_owned(),
+            )),
+        }
+    }
     // set up queue runner
 
     let queue_runner_q = job_queue.clone();

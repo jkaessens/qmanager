@@ -61,8 +61,45 @@ impl JobQueue {
         self.state
     }
 
-    pub fn set_state(&mut self, new_state: QueueState) {
+    pub fn set_state(&mut self, mut new_state: QueueState) {
+        debug!(
+            "Trying to set state {:?} to {:?}, queue size is {}",
+            self.state,
+            new_state,
+            self.queue.len()
+        );
+        if new_state == QueueState::Stopping && self.queue.is_empty() {
+            new_state = QueueState::Stopped;
+        }
         self.state = new_state;
+    }
+
+    pub fn reset_first_job(&mut self, new_state: JobState) {
+        debug!("Setting status of first job in queue to {:?}", new_state);
+
+        // Only reset if there is a job
+        if let Some(j) = self.queue.first() {
+            // Only reset if the current job is not properly queued (i.e. Running)
+            if j.state != JobState::Queued {
+                match new_state {
+                    JobState::Running | JobState::Killed(_) | JobState::Terminated(_) => {
+                        panic!("Cannot manually set a job to Running, Terminated or Killed state")
+                    }
+                    JobState::Queued => {
+                        self.queue.first_mut().map(|j| {
+                            j.started = None;
+                            j.state = JobState::Queued;
+                            j.pid = None;
+                            j.stderr = String::from("");
+                            j.stdout = String::from("");
+                        });
+                    }
+                    JobState::Failed(s) => {
+                        self.finish(JobState::Failed(s), "".to_owned(), "".to_owned());
+                    }
+                }
+            }
+        }
     }
 
     pub fn submit(&mut self, cmdline: String) -> u64 {
