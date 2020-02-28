@@ -142,8 +142,9 @@ impl JobQueue {
         {
             Some(job) => {
                 // It is okay to panic here, as failure to execute /bin/kill is a serious bug
-                let status = Command::new("/bin/kill")
+                let status = Command::new("/usr/bin/pkill")
                     .arg("-SIGTERM")
+                    .arg("-P")
                     .arg(job.pid.unwrap().to_string())
                     .status()
                     .expect("Failed to execute kill command");
