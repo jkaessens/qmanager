@@ -5,8 +5,14 @@ use config::Config;
 use std::collections::HashMap;
 use structopt::StructOpt;
 
+/// Default port for use with both daemon and client code
 pub const DEFAULT_PORT: u16 = 1337;
+
+/// Default server hostname for the client to connect to. Can be any
+/// resolvable address.
 pub const DEFAULT_HOST: &str = "localhost";
+
+/// Default program state file to be used by the daemon.
 pub const DEFAULT_STATE: &str = "/var/lib/qmanager/qmanager.state";
 
 #[derive(Debug, StructOpt)]
@@ -107,6 +113,9 @@ pub enum OptCommand {
 }
 
 impl Opt {
+    /// Merges a config file with the command-line options.
+    /// CLI options generally take precedence over options imported from
+    /// the config file.
     pub fn merge_config(&mut self, conf: Config) {
         // if --insecure is not present on the CL, check config for CA.
         // Certs and keys will be checked when destructuring the self.cmd.
@@ -116,6 +125,8 @@ impl Opt {
             }
             self.insecure |= conf.get_bool("insecure").unwrap_or(false);
         }
+
+        // TCP port for connecting (client) or listening (daemon)
         self.port = if self.port == 0 {
             conf.get_int("port")
                 .unwrap_or_else(|_| i64::from(DEFAULT_PORT)) as u16
@@ -123,16 +134,19 @@ impl Opt {
             self.port
         };
 
+        // Host name for client connection (client only)
         if self.host.is_empty() {
             self.host = conf
                 .get_str("host")
                 .unwrap_or_else(|_| DEFAULT_HOST.to_string());
         }
 
+        // "dump-json" debug flag
         if !self.dump_json {
             self.dump_json = conf.get_bool("dump-json").unwrap_or(false);
         }
 
+        // state file location (daemon only)
         if self.state_file.is_none() {
             self.state_file = Some(PathBuf::from(
                 conf.get_str("state-file")
@@ -179,8 +193,9 @@ impl Opt {
         }
     }
 
+    /// Checks general validity of the option occurrences
     pub fn verify(&self) -> Result<()> {
-        // Check general validity of the option occurrences
+        // it does not make sense to specify --insecure AND any SSL-related stuff
         if self.insecure {
             if self.ca.is_some() {
                 eprintln!("You cannot specify both --insecure and --ca!");
@@ -209,6 +224,7 @@ impl Opt {
             }
         }
 
+        // Check if appkey executables are actually existing
         for (k, v) in &self.appkeys {
             if !v.exists() {
                 error!("Appkey '{}' points to non-existent file '{:#?}'", k, v);

@@ -85,7 +85,21 @@ fn main() -> Result<()> {
         .expect("Failed to read configuration file!");
     opt.merge_config(config);
 
+    // Check general option usefulness
+    opt.verify()?;
+
+    // Do mode-specific checking and set up logging
     if let OptCommand::Daemon { .. } = &opt.cmd {
+        // Check if appkey executables are actually existing
+        for (k, v) in &opt.appkeys {
+            if !v.exists() {
+                error!("Appkey '{}' points to non-existent file '{:#?}'", k, v);
+            }
+
+            debug!("Registered appkey '{}' => '{:#?}'", k, v);
+        }
+
+        // Set up syslog daemon
         syslog::init(
             Facility::LOG_DAEMON,
             log::LevelFilter::from_str(&opt.loglevel).expect("Failed to parse log level!"),
@@ -93,6 +107,7 @@ fn main() -> Result<()> {
         )
         .expect("Failed to connect to syslog!");
     } else {
+        // Set up terminal logging
         simplelog::TermLogger::init(
             simplelog::LevelFilter::from_str(&opt.loglevel).expect("Failed to parse log level!"),
             simplelog::ConfigBuilder::new()
@@ -103,8 +118,7 @@ fn main() -> Result<()> {
         .unwrap();
     }
 
-    opt.verify()?;
-
+    // Set up program state configuration file
     let state = State::from(opt.state_file.unwrap());
 
     // Handle subcommands

@@ -1,3 +1,39 @@
+/// daemon.rs
+///
+/// Contains all code that the daemon needs to run.
+///
+/// # Set up
+///
+/// 1. The program is detached from stdout, stderr, stdin and the parent
+///    process, effectively demonizing it. The main thread is terminated.
+///
+/// 2. `fn handle()` sets up an http(s) listening socket.
+///
+/// 3. The job queue is created or restored from a file.
+///
+/// 4. The condition variable governing the communication between the queue
+///    and the client handler is set up.
+///
+/// 5. A new thread is spawned to process the job queue (see `fn run_queue`)
+///
+/// 6. A new thread is spawned to process external signals like SIGTERM
+///
+/// 7. The job queue is notified that it may start/resume operating
+///
+/// 8. A loop that processes client requests infinitely is started
+///
+/// # Operations
+///
+/// Once everything is properly set up, the main thread takes care of
+/// accepting and processing client requests. For each client request,
+/// the function `handle_client` is invoked that decodes the JSON block
+/// and acts upon the request.
+///
+/// To conserve CPU time, the job queue thread is blocking on a condition
+/// variable when it is idle. Once a client requests that a job is submitted
+/// to the queue, it is moved into the job queue structure and the thread
+/// is woken up. It then starts processing one job after another until the
+/// queue is empty again where it blocks on the variable again.
 use std::error::Error;
 use std::io::Result;
 use std::net::SocketAddr;
