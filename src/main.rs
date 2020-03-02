@@ -10,6 +10,7 @@ extern crate nix;
 extern crate reqwest;
 extern crate serde;
 extern crate serde_json;
+extern crate signal_hook;
 extern crate simplelog;
 extern crate structopt;
 extern crate syslog;
@@ -104,7 +105,7 @@ fn main() -> Result<()> {
 
     opt.verify()?;
 
-    let mut state = State::from(opt.state_file.unwrap());
+    let state = State::from(opt.state_file.unwrap());
 
     // Handle subcommands
     match opt.cmd {
@@ -127,7 +128,7 @@ fn main() -> Result<()> {
                 opt.dump_json,
                 opt.appkeys,
                 notify_url,
-                &mut state,
+                state,
             )
         }
 

@@ -1,9 +1,10 @@
 [package]
 name = "qmanager"
-version = "0.8.0-DEV"
+version = "0.8.1"
 authors = ["Jan Christian Kaessens <j.kaessens@ikmb.uni-kiel.de>"]
 
 [dependencies]
+signal-hook = "0.1"
 clap = "2"
 serde = "1"
 serde_json = "1"

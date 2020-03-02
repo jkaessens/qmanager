@@ -56,11 +56,11 @@ fn spawn_https(
 
 fn handle_client(
     mut httprequest: tiny_http::Request,
-    q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>,
+    q_mutex: Arc<(Mutex<JobQueue>, Condvar)>,
     dump_protocol: bool,
-    state: &mut State,
+    state: Arc<Mutex<State>>,
 ) {
-    let (ref q_mutex, ref cvar) = **q_mutex;
+    let (ref q_mutex, ref cvar) = *q_mutex;
 
     let mut s = String::from("");
     httprequest.as_reader().read_to_string(&mut s).unwrap();
@@ -95,7 +95,7 @@ fn handle_client(
             let mut q = q_mutex.lock().unwrap();
             q.set_state(new_state);
             cvar.notify_one();
-
+            let state = state.lock().unwrap();
             state.save(&q).expect("Could not write program state");
             (
                 200,
@@ -115,7 +115,8 @@ fn handle_client(
         Ok(Request::RemoveJob(id)) => {
             let mut q = q_mutex.lock().unwrap();
             let s = q.remove(id);
-            state.save(&q);
+            let state = state.lock().unwrap();
+            state.save(&q).expect("Could not write program state");
             match s {
                 Ok(job) => (
                     200,
@@ -144,6 +145,7 @@ fn handle_client(
         Ok(Request::SubmitJob(cmdline)) => {
             let mut q = q_mutex.lock().unwrap();
             let id = q.submit(cmdline);
+            let state = state.lock().unwrap();
             state.save(&q).expect("Could not write program state");
             cvar.notify_one();
             (
@@ -342,7 +344,7 @@ pub fn handle(
     dump_protocol: bool,
     appkeys: HashMap<String, PathBuf>,
     notify_url: Option<String>,
-    state: &mut State,
+    state: State,
 ) -> Result<()> {
     if !foreground {
         daemonize(pidfile)?;
@@ -382,21 +384,61 @@ pub fn handle(
             )),
         }
     }
-    // set up queue runner
 
+    // spawn queue runner
     let queue_runner_q = job_queue.clone();
     let queue_runner = thread::Builder::new()
         .name("Queue Runner".to_owned())
-        .spawn(move || run_queue(&queue_runner_q, notify_url, appkeys));
+        .spawn(move || run_queue(&queue_runner_q, notify_url, appkeys))
+        .unwrap();
+
+    // set up the program state to be shared among threads,
+    // namely the signal handler (ought to save state on SIGTERM)
+    // and the current thread, handling client requests
+    let state = Arc::new(Mutex::new(state));
+
+    // spawn signal handler to collect SIGTERM signals sent by systemd unit
+    // create clones before spawning, otherwise the "originals" would be moved into the closure
+    let sig_q = Arc::clone(&job_queue);
+    let sig_state = Arc::clone(&state);
+    let signal_handler = setup_signal_handler(sig_q, sig_state);
 
     // handle incoming TCP connections
     for request in httpd.incoming_requests() {
         debug!("Request: {:?}", request);
 
-        handle_client(request, &job_queue.clone(), dump_protocol, state);
+        handle_client(request, job_queue.clone(), dump_protocol, state.clone());
     }
 
-    queue_runner.unwrap().join().unwrap();
-
+    // collect threads in case of program termination
+    queue_runner.join().unwrap();
+    signal_handler.join().unwrap();
     Ok(())
+}
+
+// Creates a thread waiting for SIGTERM. Once encountered, state save is triggered and
+// the main process terminates.
+fn setup_signal_handler(
+    job_queue: Arc<(Mutex<JobQueue>, Condvar)>,
+    state: Arc<Mutex<State>>,
+) -> std::thread::JoinHandle<()> {
+    let signals = signal_hook::iterator::Signals::new(&[signal_hook::SIGTERM]).unwrap();
+
+    thread::Builder::new()
+        .name("Signal Handler".to_owned())
+        .spawn(move || {
+            for signal in signals.forever() {
+                match signal {
+                    signal_hook::SIGTERM => {
+                        info!("Caught SIGTERM, initiating state saving");
+                        let state = state.lock().unwrap();
+                        let q = job_queue.0.lock().unwrap();
+                        state.save(&q).expect("Could not write program state");
+                        std::process::exit(0);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        })
+        .unwrap()
 }
