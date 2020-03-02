@@ -13,7 +13,7 @@ use tiny_http::{Server, SslConfig};
 
 use serde_json;
 
-use job_queue::{Job, JobQueue, JobState, QueueState};
+use job_queue::{FailReason, Job, JobQueue, JobState, QueueState};
 use protocol::{Request, Response};
 use reqwest::Url;
 use state::State;
@@ -122,10 +122,17 @@ fn handle_client(
                     200,
                     serde_json::to_string_pretty(&Response::GetJob(job)).unwrap(),
                 ),
-                _ => (
+                Err(FailReason::NoSuchJob) => (
                     422,
                     serde_json::to_string_pretty(&Response::Error("No such job".to_string()))
                         .unwrap(),
+                ),
+                Err(FailReason::WrongJobState) => (
+                    422,
+                    serde_json::to_string_pretty(&Response::Error(
+                        "Job is currently running and cannot be removed".to_string(),
+                    ))
+                    .unwrap(),
                 ),
             }
         }
@@ -136,8 +143,10 @@ fn handle_client(
                 Ok(_) => (200, serde_json::to_string_pretty(&Response::Ok).unwrap()),
                 _ => (
                     422,
-                    serde_json::to_string_pretty(&Response::Error("No such job".to_string()))
-                        .unwrap(),
+                    serde_json::to_string_pretty(&Response::Error(
+                        "Job is currently not running.".to_string(),
+                    ))
+                    .unwrap(),
                 ),
             }
         }

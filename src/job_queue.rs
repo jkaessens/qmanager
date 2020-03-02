@@ -11,6 +11,11 @@ pub enum JobState {
     Failed(String),
 }
 
+pub enum FailReason {
+    WrongJobState,
+    NoSuchJob,
+}
+
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy)]
 pub enum QueueState {
     Running,
@@ -204,7 +209,7 @@ impl JobQueue {
         }
     }
 
-    pub fn remove(&mut self, id: u64) -> Result<Job, ()> {
+    pub fn remove(&mut self, id: u64) -> Result<Job, FailReason> {
         let mut item_index: Option<usize> = None;
 
         // scan finished jobs
@@ -223,7 +228,7 @@ impl JobQueue {
         for (current, job) in self.queue.iter().enumerate() {
             if job.id == id {
                 if job.state == JobState::Running {
-                    return Err(());
+                    return Err(FailReason::WrongJobState);
                 } else {
                     item_index = Some(current);
                     break;
@@ -235,6 +240,6 @@ impl JobQueue {
             return Ok(self.queue.remove(index));
         }
 
-        Err(())
+        Err(FailReason::NoSuchJob)
     }
 }
