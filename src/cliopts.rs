@@ -110,6 +110,13 @@ pub enum OptCommand {
         #[structopt(long)]
         job_id: u64,
     },
+
+    /// Removes finished jobs from the queue based on timestamps
+    Cleanup {
+        /// Maximum age of a job's 'finished' timestamp, i.e. '8 days 3 seconds'
+        #[structopt(long)]
+        max_age: humantime::Duration,
+    },
 }
 
 impl Opt {
@@ -222,15 +229,6 @@ impl Opt {
                     return Err(std::io::Error::from(ErrorKind::InvalidInput));
                 }
             }
-        }
-
-        // Check if appkey executables are actually existing
-        for (k, v) in &self.appkeys {
-            if !v.exists() {
-                error!("Appkey '{}' points to non-existent file '{:#?}'", k, v);
-            }
-
-            debug!("Registered appkey '{}' => '{:#?}'", k, v);
         }
 
         // PathBuf validity is checked when the path is actually opened later, no need to check here.

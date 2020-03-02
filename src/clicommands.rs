@@ -162,6 +162,57 @@ pub fn handle_set_queue_status(
     Ok(())
 }
 
+pub fn handle_cleanup(
+    client: &reqwest::Client,
+    url: reqwest::Url,
+    max_age: humantime::Duration,
+    dump_protocol: bool,
+) -> Result<usize> {
+    // Request list of finished jobs
+    let request_s = serde_json::to_string_pretty(&Request::GetFinishedJobs).unwrap();
+    let mut response_req = client
+        .post(url.clone())
+        .body(request_s.clone())
+        .send()
+        .unwrap();
+    if dump_protocol {
+        println!("Sent: {} ", request_s);
+    }
+
+    let response_s = response_req.text().unwrap();
+    if dump_protocol {
+        println!("Received: {} ", response_s);
+    }
+
+    // Get time stamp of oldest acceptable finished job
+    let oldest_time = std::time::SystemTime::now() - *max_age;
+    debug!(
+        "It is now {:?}. Max age is {:?} and max job time stamp is {:?}.",
+        std::time::SystemTime::now(),
+        max_age,
+        oldest_time
+    );
+
+    // Counter for removed jobs
+    let mut jobs_removed = 0;
+
+    // Find and remove expired jobs
+    if let Response::GetJobs(jobs) = serde_json::from_str(&response_s)? {
+        for job in &jobs {
+            if let Some(t) = job.finished {
+                if t < oldest_time {
+                    match handle_remove(client, url.clone(), job.id, dump_protocol) {
+                        Ok(_) => jobs_removed += 1,
+                        Err(e) => println!("Could not remove job {}: {}", job.id, e),
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(jobs_removed)
+}
+
 /// Requests the job queue state, the list of queued, running and finished jobs respectively
 pub fn handle_queue_status(
     client: &reqwest::Client,

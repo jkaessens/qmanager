@@ -6,6 +6,7 @@ extern crate clap;
 extern crate log;
 extern crate config;
 extern crate daemonize;
+extern crate humantime;
 extern crate nix;
 extern crate reqwest;
 extern crate serde;
@@ -176,6 +177,14 @@ fn main() -> Result<()> {
             let (client, url) = create_client(opt.insecure, opt.ca, &opt.host, opt.port)?;
             clicommands::handle_kill(&client, url, job_id, opt.dump_json).and_then(|job| {
                 println!("{:?}", job);
+                Ok(())
+            })
+        }
+
+        OptCommand::Cleanup { max_age } => {
+            let (client, url) = create_client(opt.insecure, opt.ca, &opt.host, opt.port)?;
+            clicommands::handle_cleanup(&client, url, max_age, opt.dump_json).and_then(|n| {
+                println!("{} jobs removed.", n);
                 Ok(())
             })
         }
