@@ -2,49 +2,79 @@ use std::io::{Error, ErrorKind};
 use std::process::Command;
 use std::time::SystemTime;
 
+/// The current state of a single job
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum JobState {
+    /// queued and waiting for execution
     Queued,
+    /// currently running (top of 'queued' queue)
     Running,
+    /// the process has exited with the given value
     Terminated(i32),
+    /// the process has been killed by the given signal
     Killed(i32),
+    /// the process could not be launched or was aborted by us
     Failed(String),
 }
 
+/// The reason a job-specific command could not be processed
 pub enum FailReason {
+    /// The job is in the wrong state (i.e. removing a running job)
     WrongJobState,
+    /// There is no such job
     NoSuchJob,
 }
 
+/// The state of the job queue
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy)]
 pub enum QueueState {
+    /// queue is idle or executing a job
     Running,
+    /// the last process is executed before the queue is stopped
     Stopping,
+    /// the queue is stopped and is not precessing jobs
     Stopped,
 }
 
+/// The Job
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Job {
+    /// The unique job ID
     pub id: u64,
+    /// Command to be executed
     pub cmdline: String,
+    /// Timestamp of queue insertion
     pub scheduled: SystemTime,
+    /// Timestamp of execution start
     pub started: Option<SystemTime>,
+    /// Timestamp of execution end
     pub finished: Option<SystemTime>,
+    /// stderr content
     pub stderr: String,
+    /// stdout content
     pub stdout: String,
+    /// current job state
     pub state: JobState,
+    /// PID of the process (only if running or finished)
     pub pid: Option<u32>,
 }
 
+/// The Job Queue itself
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct JobQueue {
+    /// The last ID assigned to a job
     last_id: u64,
+    /// Queue state
     state: QueueState,
+    /// The list of queued jobs, including the currently running one
     queue: Vec<Job>,
+    /// List of finished jobs
     finished: Vec<Job>,
 }
 
 impl JobQueue {
+    /// Creates a new JobQueue with the given last ID. The first ID
+    /// to be assigned will be last_id+1.
     pub fn new(last_id: u64) -> Self {
         JobQueue {
             last_id,
@@ -54,18 +84,22 @@ impl JobQueue {
         }
     }
 
+    /// Provides an iterator over the currently queued jobs, including the running
     pub fn iter_queued(&self) -> impl Iterator<Item = &Job> {
         self.queue.iter()
     }
 
+    /// Provides an iterater over the finished jobs
     pub fn iter_finished(&self) -> impl Iterator<Item = &Job> {
         self.finished.iter()
     }
 
+    /// Returns the state of the queue
     pub fn get_state(&self) -> QueueState {
         self.state
     }
 
+    /// Sets the state of the queue
     pub fn set_state(&mut self, mut new_state: QueueState) {
         debug!(
             "Trying to set state {:?} to {:?}, queue size is {}",
@@ -79,6 +113,8 @@ impl JobQueue {
         self.state = new_state;
     }
 
+    /// Reset the first job of the queue if it was some variation of Running
+    /// during start/resume.
     pub fn reset_first_job(&mut self, new_state: JobState) {
         debug!("Setting status of first job in queue to {:?}", new_state);
 
@@ -107,6 +143,7 @@ impl JobQueue {
         }
     }
 
+    /// Submits a new job to the queue and returns the assigned ID
     pub fn submit(&mut self, cmdline: String) -> u64 {
         let job = Job {
             id: self.last_id + 1,
@@ -125,6 +162,8 @@ impl JobQueue {
         self.last_id
     }
 
+    /// Returns the topmost job of the "queued" queue if available.
+    /// The job is expected to be executed.
     pub fn schedule(&mut self) -> Option<Job> {
         if self.state == QueueState::Running {
             self.queue.first_mut().map(|j| {
@@ -137,9 +176,11 @@ impl JobQueue {
         }
     }
 
+    /// Sends SIGTERM to the associated pid of the given job ID
     pub fn send_sigterm(&mut self, jobid: u64) -> Result<(), Error> {
         debug!("[job queue] Trying to kill job {}", jobid);
 
+        // find the currently running job
         match self
             .queue
             .iter()
@@ -173,6 +214,7 @@ impl JobQueue {
         }
     }
 
+    /// Assigns a pid to the currently running job
     pub fn assign_pid(&mut self, jobid: u64, pid: u32) {
         if let Some(ref mut job) = self
             .queue
@@ -183,6 +225,8 @@ impl JobQueue {
         }
     }
 
+    /// Sets a job to the "Finished" state and moves it to the appropriate queue.
+    /// Time stamps are updated.
     pub fn finish(&mut self, new_state: JobState, stdout: String, stderr: String) -> Option<Job> {
         if !self.queue.is_empty() {
             let mut j = self.queue.remove(0);
@@ -209,6 +253,9 @@ impl JobQueue {
         }
     }
 
+    /// Removes the job identified by the given ID.
+    /// Only queued or finished jobs can be removed. Trying to remove a running
+    /// job will fail.
     pub fn remove(&mut self, id: u64) -> Result<Job, FailReason> {
         let mut item_index: Option<usize> = None;
 
@@ -220,6 +267,7 @@ impl JobQueue {
             }
         }
 
+        // remove if found
         if let Some(index) = item_index {
             return Ok(self.finished.remove(index));
         }

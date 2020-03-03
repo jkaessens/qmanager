@@ -162,6 +162,9 @@ pub fn handle_set_queue_status(
     Ok(())
 }
 
+/// Removes jobs from the finished queue based on their age.
+/// There is no direct JSON command to do this, so it requests
+/// the job lists and removes them manually.
 pub fn handle_cleanup(
     client: &reqwest::Client,
     url: reqwest::Url,
