@@ -7,12 +7,16 @@ use std::time::SystemTime;
 pub enum JobState {
     /// queued and waiting for execution
     Queued,
+
     /// currently running (top of 'queued' queue)
     Running,
+
     /// the process has exited with the given value
     Terminated(i32),
+
     /// the process has been killed by the given signal
     Killed(i32),
+
     /// the process could not be launched or was aborted by us
     Failed(String),
 }
@@ -21,6 +25,7 @@ pub enum JobState {
 pub enum FailReason {
     /// The job is in the wrong state (i.e. removing a running job)
     WrongJobState,
+
     /// There is no such job
     NoSuchJob,
 }
@@ -30,8 +35,10 @@ pub enum FailReason {
 pub enum QueueState {
     /// queue is idle or executing a job
     Running,
+
     /// the last process is executed before the queue is stopped
     Stopping,
+
     /// the queue is stopped and is not precessing jobs
     Stopped,
 }
@@ -41,20 +48,28 @@ pub enum QueueState {
 pub struct Job {
     /// The unique job ID
     pub id: u64,
+
     /// Command to be executed
     pub cmdline: String,
+
     /// Timestamp of queue insertion
     pub scheduled: SystemTime,
+
     /// Timestamp of execution start
     pub started: Option<SystemTime>,
+
     /// Timestamp of execution end
     pub finished: Option<SystemTime>,
+
     /// stderr content
     pub stderr: String,
+
     /// stdout content
     pub stdout: String,
+
     /// current job state
     pub state: JobState,
+
     /// PID of the process (only if running or finished)
     pub pid: Option<u32>,
 }
@@ -64,10 +79,13 @@ pub struct Job {
 pub struct JobQueue {
     /// The last ID assigned to a job
     last_id: u64,
+
     /// Queue state
     state: QueueState,
+
     /// The list of queued jobs, including the currently running one
     queue: Vec<Job>,
+
     /// List of finished jobs
     finished: Vec<Job>,
 }

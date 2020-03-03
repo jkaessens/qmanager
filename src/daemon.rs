@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 /// daemon.rs
 ///
 /// Contains all code that the daemon needs to run.
@@ -34,6 +35,7 @@
 /// to the queue, it is moved into the job queue structure and the thread
 /// is woken up. It then starts processing one job after another until the
 /// queue is empty again where it blocks on the variable again.
+// std
 use std::error::Error;
 use std::io::Result;
 use std::net::SocketAddr;
@@ -43,18 +45,21 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
+// crates
 use daemonize::Daemonize;
+use reqwest::Url;
+use serde_json;
 use systemd::daemon;
 use tiny_http::{Server, SslConfig};
 
-use serde_json;
-
+// modules
 use job_queue::{FailReason, Job, JobQueue, JobState, QueueState};
 use protocol::{Request, Response};
-use reqwest::Url;
 use state::State;
-use std::collections::HashMap;
 
+/// Detaches the current process from the terminal and the current task
+/// session. Optionally takes a path to a file where the pid of the
+/// process is stored, for later use by managers such as systemd.
 fn daemonize(pidfile: Option<PathBuf>) -> Result<()> {
     let uid = nix::unistd::Uid::current().as_raw();
     let pidfile_default = PathBuf::from(&format!("/run/user/{}/qmanager.pid", uid));
@@ -67,6 +72,8 @@ fn daemonize(pidfile: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// Sets up a HTTP or HTTPS server, depending on whether both `cert`and `key`
+/// are given. Listens on the given TCP `port` on all available IP addresses
 fn spawn_https(
     tcp_port: u16,
     cert: Option<Vec<u8>>,
@@ -78,6 +85,7 @@ fn spawn_https(
         panic!("You must either provide an SSL certificate AND private key or none of them.");
     }
 
+    // decide on whether http or https should be used
     match cert {
         Some(c) => {
             let ssl_config = SslConfig {
@@ -90,6 +98,10 @@ fn spawn_https(
     }
 }
 
+/// Handles a single HTTP request sent by a single client.
+/// Translates the JSON block to a Request, evaluates the
+/// request (i.e. adds a job to the queue) and returns
+/// a JSON result to the client.
 fn handle_client(
     mut httprequest: tiny_http::Request,
     q_mutex: Arc<(Mutex<JobQueue>, Condvar)>,
@@ -237,6 +249,7 @@ fn handle_client(
     }
 }
 
+/// Calls the notification URL for the given job
 fn run_notify_command(job: Job, url: &Url) -> Result<()> {
     let mut url = url.clone();
     url.set_query(Some(&format!("jobid={}", job.id)));
@@ -266,15 +279,33 @@ fn run_notify_command(job: Job, url: &Url) -> Result<()> {
     }
 }
 
+/// Starts working the job queue.
+///
+/// First, it checks whether a job is available in the queue.
+/// Then,
+/// 1. no job is available. The thread goes to sleep and waits for a signal
+///    on the condition variable within the `q_mutex` tuple.
+///
+/// 1.1 If the thread is woken up, it checks again for an available job. If
+///     there is none, it returns to sleep. If there is, proceed to (2).
+///
+/// 2. Mark the job as `Running` and execute it
+///
+/// 3. Collect the return value, stdout and stderr of the job
+///
+/// 4. Call the notification handler
+///
+/// 5. Mark the job as `Finished` and return to (1).
 fn run_queue(
     q_mutex: &Arc<(Mutex<JobQueue>, Condvar)>,
     notify_url: Option<String>,
     appkeys: HashMap<String, PathBuf>,
-) {
+) -> ! {
     let (ref q_mutex, ref cvar) = **q_mutex;
 
     let notify_url = notify_url.map(|s| Url::parse(&s).unwrap());
 
+    // main loop
     loop {
         let mut job: Option<Job> = None;
 
@@ -317,6 +348,8 @@ fn run_queue(
             cmdline_remainder
         );
 
+        // Spawn the process, collect stdout, stderr and pid.
+        // Continues once the job is terminated (one way or another).
         let cmd = Command::new("sh")
             .arg("-c")
             .arg(cmdline_wrapper)
@@ -332,10 +365,15 @@ fn run_queue(
                 child.wait_with_output()
             });
 
+        // Collect status of finished job and forward status to the queue
         let job = match cmd {
+            // Job was successfully launched. This does not mean that the
+            // process itself was successful.
             Ok(output) => {
                 let mut q = q_mutex.lock().unwrap();
 
+                // Job was terminated due to a signal, e.g. unhandled SIGTERM,
+                // SIGSEGV, etc. see signal(7) for default signal actions.
                 if let Some(signum) = output.status.signal() {
                     info!("[queue runner] Job was killed with signal {}", signum);
                     q.finish(
@@ -344,6 +382,8 @@ fn run_queue(
                         String::from_utf8_lossy(&output.stderr).to_string(),
                     )
                 } else {
+                    // Job has terminated by itself and a regular exit code
+                    // was returned.
                     let status = output.status.code().unwrap();
                     info!("[queue runner] Job has terminated with code {}", status);
                     q.finish(
@@ -353,6 +393,7 @@ fn run_queue(
                     )
                 }
             }
+            // Job could not be started.
             Err(e) => {
                 let mut q = q_mutex.lock().unwrap();
                 let message = e.description().to_string();
@@ -365,6 +406,7 @@ fn run_queue(
             }
         };
 
+        // Notify the server of job completion regardless of the result
         if let Some(j) = job {
             if notify_url.is_some() {
                 let id = j.id;

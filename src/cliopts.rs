@@ -161,6 +161,7 @@ impl Opt {
             ));
         }
 
+        // daemon-specific opts
         if let OptCommand::Daemon {
             ref mut cert,
             ref mut key,
@@ -193,6 +194,7 @@ impl Opt {
             self.appkeys.insert(k, PathBuf::from(v.into_str().unwrap()));
         }
 
+        // set log level
         if self.loglevel.is_empty() {
             self.loglevel = conf
                 .get_str("loglevel")
