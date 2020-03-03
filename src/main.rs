@@ -108,15 +108,26 @@ fn main() -> Result<()> {
         )
         .expect("Failed to connect to syslog!");
     } else {
-        // Set up terminal logging
-        simplelog::TermLogger::init(
+        // Set up terminal logging. May not work if we're not attached to a terminal (i.e. cron)
+        let config = simplelog::ConfigBuilder::new()
+            .add_filter_allow_str(module_path!())
+            .build();
+
+        let logger = simplelog::TermLogger::init(
             simplelog::LevelFilter::from_str(&opt.loglevel).expect("Failed to parse log level!"),
-            simplelog::ConfigBuilder::new()
-                .add_filter_allow_str(module_path!())
-                .build(),
+            config.clone(),
             simplelog::TerminalMode::Stderr,
-        )
-        .unwrap();
+        );
+
+        // TermLogger didn't work, maybe no tty attached. Try simple logger which *should* succeed
+        if logger.is_err() {
+            simplelog::SimpleLogger::init(
+                simplelog::LevelFilter::from_str(&opt.loglevel)
+                    .expect("Failed to parse log level!"),
+                config,
+            )
+            .expect("Could not set up even the simplest logger!");
+        }
     }
 
     // Set up program state configuration file
