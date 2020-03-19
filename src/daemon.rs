@@ -213,9 +213,9 @@ fn handle_client(
 
         Err(e) => {
             if e.is_io() {
-                (500, e.description().to_owned())
+                (500, e.to_string().to_owned())
             } else {
-                (400, e.description().to_owned())
+                (400, e.to_string().to_owned())
             }
         }
     };
@@ -257,7 +257,7 @@ fn run_notify_command(job: Job, url: &Url) -> Result<()> {
 
     match reqwest::get(url) {
         Err(e) => {
-            error!("Failed to call notify url {:#?}: {}", s, e.description());
+            error!("Failed to call notify url {:#?}: {}", s, e.to_string());
             Ok(())
         }
         Ok(ref r) if r.status().is_success() => {
@@ -396,7 +396,7 @@ fn run_queue(
             // Job could not be started.
             Err(e) => {
                 let mut q = q_mutex.lock().unwrap();
-                let message = e.description().to_string();
+                let message = e.to_string();
                 error!("[queue runner] Failed to launch job: {}", message);
                 q.finish(
                     JobState::Failed(message),
@@ -414,7 +414,7 @@ fn run_queue(
                     error!(
                         "Failed to run notify command for job {}: {}",
                         id,
-                        e.description()
+                        e.to_string()
                     );
                 }
             }
@@ -443,12 +443,12 @@ pub fn handle(
             error!(
                 "Could not set up listening socket on port {}: {}",
                 tcp_port,
-                e.description()
+                e.to_string()
             );
             panic!(
                 "Could not set up listening socket on port {}: {}",
                 tcp_port,
-                e.description()
+                e.to_string()
             )
         }
     };
